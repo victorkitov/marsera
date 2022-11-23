@@ -225,12 +225,57 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
         Параметры
         ----------
-        ### Заполняется аналогично fit.
+        X : array-like, shape = [m, n], где m - кол-во объектов, n - кол-во признаков
+            Обучающие данные.
+
+
+        y : array-like, optional (default=None), shape = [m, p], где m - кол-во объектов, p - кол-во разных выходов
+            Ответы на обучающих данных.
+
+
+        sample_weight : array-like, optional (default=None), shape = [m], где m - кол-во объектов
+            Пообъектное взвешивание. Веса >= 0. Полезно при несбалансированных дисперсиях распределений над объектами.
+
+
+        output_weight : array-like, optional (default=None), shape = [p], где p - кол-во выходов
+            Взвешивание всех ответов модели для каждого из выходовов после обучения.
+
+
+        ### Пока игнорируем
+        missing : array-like, shape = [m, n], где m - кол-во объектов, n - кол-во признаков.
+            ...
+
+
+        linvars : iterable of strings or ints, optional (empty by default)
+            Перечисление тех признаков (по номерам или именам), которые могут входить в базисные функции только линейно.
+
+
+        xlabels : iterable of strings , optional (empty by default)
+           Явное задание имён признаков (столбцов). Кол-во имён должно быть равно кол-ву признаков.
 
         ### Что такое skip_scrub?
         """
-        pass
 
+        # Пока реализуем самый простой вариант MARS (алгоритм 2 из оригинальной статьи)
+        # В комментариях приведены обозначения из оригинальной статьи
+
+        
+        data_count, data_dim = X.shape
+        terms_list = [1, ]  # B_1(x) = 1; B_m(x) = (v_m, t_m)
+        terms_count = 2     # M
+        while self.max_terms >= terms_count:
+            lof = 100
+            for term_num in range(0, terms_count - 1):
+                valid_coords = list(range(1, data_dim + 1))
+                for hinge in terms_list[term_num]:
+                    valid_coords.pop(hinge[0])
+                for v in valid_coords:
+                    valid_knots_inds = []
+                    for ind in range(data_count):
+                        for terms_list[term_num]:
+
+                    for t in 
+                    
 
     def pruning_pass(self, X, y=None,
                       sample_weight=None,
