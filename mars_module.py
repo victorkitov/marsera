@@ -236,7 +236,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         sample_weight : array-like, optional (default=None), shape = [m], где m - кол-во объектов
             Пообъектное взвешивание. Веса >= 0. Полезно при несбалансированных дисперсиях распределений над объектами.
 
-
+        ### как это понимать?
         output_weight : array-like, optional (default=None), shape = [p], где p - кол-во выходов
             Взвешивание всех ответов модели для каждого из выходовов после обучения.
 
@@ -259,22 +259,55 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         # Пока реализуем самый простой вариант MARS (алгоритм 2 из оригинальной статьи)
         # В комментариях приведены обозначения из оригинальной статьи
 
+
+        # Обозначения:
+        # g(x) - модель: 
+        #   g(x) = a_1 * B_1(x) + ... + a_M * B_M(x)
+        #     M - итоговое кол-во б.ф.
+        # B_i - i-ая базисная ф-ция (б.ф.)
+        #   B_i = [s_1 * (x_(v_1) - t_1)]_+ * ... * [s_Km * (x_(v_Km) - t_Km)]_+
+        #   B_1 = 1 (константная б.ф.)
+        #     [...]_+ - ReLU
+        #     Km - общее кол-во множителей в m-ой б.ф.
+        #     s_j - знак j-ого множителя
+        #     v_j - координата x j-ого множителя
+        #     t_j - порог j-ого множителя
+        # a_i - коэф-т при i-ой б.ф. 
+
         
+        terms_list = [1, ]  # terms_list = [B_1,..., B_M]
         data_count, data_dim = X.shape
-        terms_list = [1, ]  # B_1(x) = 1; B_m(x) = (v_m, t_m)
-        terms_count = 2     # M
-        while self.max_terms >= terms_count:
-            lof = 100
-            for term_num in range(0, terms_count - 1):
-                valid_coords = list(range(1, data_dim + 1))
-                for hinge in terms_list[term_num]:
-                    valid_coords.pop(hinge[0])
+        terms_count = 2     # M = 2
+        # создаём б.ф. пока не достигнем макс. кол-ва
+        while terms_count <= self.max_terms:
+            best_lof = 100  # lof* = inf
+            # перебираем уже созданные б.ф.
+            for term in terms_list:
+                # формируем мн-во невалидных координат
+                not_valid_coords = []
+                for hinge in term:
+                    # если это не константная б.ф.
+                    if hinge != 1:
+                        (s, v, t) = hinge
+                        not_valid_coords.append(v)
+                # формируем мн-во валидных координат
+                valid_coords = [coord for coord in range(0, data_dim)
+                                if coord not in not_valid_coords]
+                # перебираем все ещё не занятые координаты
                 for v in valid_coords:
-                    valid_knots_inds = []
+                    # перебираем обучающие данные
                     for ind in range(data_count):
                         for terms_list[term_num]:
 
-                    for t in 
+                    for t in ...:
+                        g = ...
+                        lof = ...
+                        if lof < best_lof:
+                            best_lof = lof
+                            best_m = m
+                            best_v = v
+                            best_t = t
+            terms_list.append()
                     
 
     def pruning_pass(self, X, y=None,
