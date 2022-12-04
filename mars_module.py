@@ -1,5 +1,6 @@
 import numpy as np
 from scipy import sparse
+from scipy import optimize.linprog as linprog
 from sklearn.base import RegressorMixin, BaseEstimator, TransformerMixin
 
 
@@ -211,6 +212,103 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
            Явное задание имён признаков (столбцов). Кол-во имён должно быть равно кол-ву признаков.
         """
         pass
+
+
+    @staticmethod
+    def relu_func(x, s, v, t):
+        '''
+        Ф-ция, реализующая положительную срезку (усечённая степенная сплайновая ф-ция)
+            [s * (x_v - t)]_+
+
+        Параметры
+        ----------
+        x: 
+        s: знак
+        v: координата
+        t: порог
+        '''
+        relu = max(s * (x[v] - t), 0)
+        return relu
+
+
+    @staticmethod
+    def cubic_func(x, s, v, t, t_minus, t_plus):
+        '''
+        Ф-ция, реализующая кубический усечённый сплайн с непрерывной 1ой производной
+            ...
+
+        Параметры
+        ----------
+        x: 
+        s: знак
+        v: координата
+        t: порог
+        t_minus:
+        t_plus:
+        '''
+        pass
+
+
+    ### Можно ещё какие-то ф-ции реализовать
+
+
+    @staticmethod
+    def term_calculation(x, term):
+        '''
+        Ф-ция, реализующая вычисление б.ф. B(x):
+            B(x) = [s_1 * (x_(v_1) - t_1)]_+ * ... * [s_Km * (x_(v_Km) - t_Km)]_+
+
+        Параметры
+        ----------
+        x: 
+        term:
+        '''
+        # если это не константная б.ф. B_1(x)
+        if not isinstance(term, int):
+            term_value = 1
+            for prod in term:
+                (s, v, t) = prod
+                term_value *= Earth.relu_func(x, s, v, t)
+                if term_value == 0:
+                    return term_value
+            return term_value
+        else:
+            return term
+        
+        
+
+    @staticmethod
+    def g_calculation(x, terms_list, coeffs_list):
+        '''
+        Ф-ция, реализующая ф-цию g(x):
+            g(x) = a_1 * B_1(x) + ... + a_M * B_M(x)
+
+        Параметры
+        ----------
+        x: 
+        terms_list:
+        coeffs_list:
+        '''
+        g_value = 0
+        for ind in range(len(terms_list)):
+            g_value += coeffs_list[ind] * Earth.term_calculation(x, terms_list[ind])
+        return g_value
+
+
+    @staticmethod
+    def GCV(f, d=3):
+        '''
+        Generalized Cross-Validation criterion:
+            GCV() = 1/N * sum[(y_i - f(x_i))^2]/[1 - C_correct(M)/N]^2
+            C(M) = tr(B @ (B^T @ B)^(-1) @ B^T) + 1
+            C_correct(M) = C(M) + d * M
+            C(M) - "число лин. нез. б.ф."
+        
+        f: 
+        M: (хотя мб и не надо передавать)
+        d: параметр сглаживания (обычно 2-4) чем больше, тем меньше узлов
+        '''
+        pass
         
 
     def forward_pass(self, X, y=None,
@@ -263,48 +361,54 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         # Обозначения:
         # g(x) - модель: 
         #   g(x) = a_1 * B_1(x) + ... + a_M * B_M(x)
-        #     M - итоговое кол-во б.ф.
-        # B_i - i-ая базисная ф-ция (б.ф.)
-        #   B_i = [s_1 * (x_(v_1) - t_1)]_+ * ... * [s_Km * (x_(v_Km) - t_Km)]_+
+        #     M - итоговое кол-во базисных ф-ций (б.ф.)
+        # B_i - i-ая б.ф. ---> term
+        #   B_i(x) = [s_1 * (x_(v_1) - t_1)]_+ * ... * [s_Km * (x_(v_Km) - t_Km)]_+
         #   B_1 = 1 (константная б.ф.)
-        #     [...]_+ - ReLU
+        #   составляющие множители б.ф. ---> hinge
+        #     [...]_+ - положительная срезка
         #     Km - общее кол-во множителей в m-ой б.ф.
         #     s_j - знак j-ого множителя
         #     v_j - координата x j-ого множителя
         #     t_j - порог j-ого множителя
-        # a_i - коэф-т при i-ой б.ф. 
+        # a_i - коэф-т при i-ой б.ф.
+        # x = (x_1,...,x_d), d - размерность ---> data_dim
 
         
         terms_list = [1, ]  # terms_list = [B_1,..., B_M]
         data_count, data_dim = X.shape
         terms_count = 2     # M = 2
+
         # создаём б.ф. пока не достигнем макс. кол-ва
         while terms_count <= self.max_terms:
-            best_lof = 100  # lof* = inf
+            best_lof = 10000000  # lof* = inf
+
             # перебираем уже созданные б.ф.
             for term in terms_list:
-                # формируем мн-во невалидных координат
+                # формируем мн-во невалидных координат (уже использованных)
                 not_valid_coords = []
-                for hinge in term:
-                    # если это не константная б.ф.
-                    if hinge != 1:
-                        (s, v, t) = hinge
+                # если это не константная б.ф. B_1
+                if term != 1:
+                    for prod in term:
+                        (s, v, t) = prod
                         not_valid_coords.append(v)
                 # формируем мн-во валидных координат
                 valid_coords = [coord for coord in range(0, data_dim)
                                 if coord not in not_valid_coords]
+
                 # перебираем все ещё не занятые координаты
                 for v in valid_coords:
+
                     # перебираем обучающие данные
                     for ind in range(data_count):
-                        for terms_list[term_num]:
-
-                    for t in ...:
+                        # учитываем только нетривиальные пороги
+                        if Earth.term_calculation(X[ind], term) == 0:
+                            continue
                         g = ...
                         lof = ...
                         if lof < best_lof:
                             best_lof = lof
-                            best_m = m
+                            best_term = term
                             best_v = v
                             best_t = t
             terms_list.append()
