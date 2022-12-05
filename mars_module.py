@@ -422,9 +422,30 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         """
         Отдельно проход назад.
 
+
         Параметры
         ----------
-        ### Заполняется аналогично fit.
+        X : array-like, shape = [m, n], где m - кол-во объектов, n - кол-во признаков
+            Обучающие данные.
+
+
+        y : array-like, optional (default=None), shape = [m, p], где m - кол-во объектов, p - кол-во разных выходов
+            Ответы на обучающих данных.
+
+
+        sample_weight : array-like, optional (default=None), shape = [m], где m - кол-во объектов
+            Пообъектное взвешивание. Веса >= 0. Полезно при несбалансированных дисперсиях распределений над объектами.
+
+        ### как это понимать?
+        output_weight : array-like, optional (default=None), shape = [p], где p - кол-во выходов
+            Взвешивание всех ответов модели для каждого из выходовов после обучения.
+
+
+        ### Пока игнорируем
+        missing : array-like, shape = [m, n], где m - кол-во объектов, n - кол-во признаков.
+            ...
+
+        ### Что такое skip_scrub?
         """
         data_count, data_dim = X.shape
         terms_count = len(self.terms_list)     # M = 2
