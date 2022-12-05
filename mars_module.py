@@ -149,6 +149,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         self.enable_pruning = enable_pruning
         self.feature_importance_type = feature_importance_type
         self.verbose = verbose
+        self.terms_list = [1, ]  # terms_list = [B_1,..., B_M]
 
         ### Пока не реализуем
         # self.allow_missing = allow_missing
@@ -375,16 +376,15 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         # x = (x_1,...,x_d), d - размерность ---> data_dim
 
         
-        terms_list = [1, ]  # terms_list = [B_1,..., B_M]
         data_count, data_dim = X.shape
         terms_count = 2     # M = 2
 
         # создаём б.ф. пока не достигнем макс. кол-ва
         while terms_count <= self.max_terms:
-            best_lof = 10000000  # lof* = inf
+            best_lof = float('inf')  # lof* = inf
 
             # перебираем уже созданные б.ф.
-            for term in terms_list:
+            for term in self.terms_list:
                 # формируем мн-во невалидных координат (уже использованных)
                 not_valid_coords = []
                 # если это не константная б.ф. B_1
@@ -411,7 +411,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
                             best_term = term
                             best_v = v
                             best_t = t
-            terms_list.append()
+            self.terms_list.append()
                     
 
     def pruning_pass(self, X, y=None,
@@ -426,7 +426,30 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         ----------
         ### Заполняется аналогично fit.
         """
-        pass
+        data_count, data_dim = X.shape
+        terms_count = len(self.terms_list)     # M = 2
+        
+        # функции, ещё не удаленные из множества
+        # изначально все, кроме константной
+        deletable = self.terms_list[1:]
+
+        # названия переменных взяты из статьи
+        best_K = list(self.terms_list)
+        best_lof = ...
+        while terms_count >= 2:
+            b = float('inf')
+            L = list(best_K)
+            for term in deletable:
+                K = list(L)
+                K.remove(term)
+                # считаем lof для K
+                lof = ...
+                if lof < b:
+                    b = lof
+                    best_K = K
+                if lof < best_lof:
+                    best_lof = lof
+                    self.terms_list = K
 
 
     def forward_trace(self):
