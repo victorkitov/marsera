@@ -276,6 +276,8 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
     @staticmethod
     def term_calculation(x, term):
+        # TODO:
+        # нужно добавить аргумент под тип базисной функции (relu, cubic и т. д.)
         '''
         Ф-ция, реализующая вычисление б.ф. B(x):
             B(x) = [s_1 * (x_(v_1) - t_1)]_+ * ... * [s_Km * (x_(v_Km) - t_Km)]_+
@@ -289,6 +291,8 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         if not isinstance(term, int):
             term_value = 1
             for prod in term:
+                # TODO:
+                # тут сложнее, потому что для cubic будут храниться (s, v, t, t_plus, t_minus)
                 (s, v, t) = prod
                 term_value *= Earth.relu_func(x, s, v, t)
                 if term_value == 0:
@@ -419,6 +423,10 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
                 # перебираем все ещё не занятые координаты
                 for v in valid_coords:
+                    # TODO:
+                    # здесь в переборе нужно дописать версию для cubic
+                    # t_plus и t_minus предлагается выбрать как среднее между 
+                    # t и соседними узлами справа и слева
 
                     # перебираем обучающие данные
                     for ind in range(data_count):
