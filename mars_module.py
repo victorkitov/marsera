@@ -247,7 +247,28 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         t_minus:
         t_plus:
         '''
-        pass
+        # знак положительный
+        if s > 0:
+            if x[v] >= t_plus:
+                return x[v] - t
+            # t_minus < x[v] < t_plus
+            if x[v] > t_minus:
+                p_plus = (2 * t_plus + t_minus - 3 * t) / ((t_plus - t_minus) ** 2)
+                r_plus = (2 * t - t_plus - t_minus) / ((t_plus - t_minus) ** 3)
+                return p_plus * ((x[v] - t_minus) ** 2) + r_plus * ((x[v] - t_minus) ** 3)
+            # x[v] <= t_minus
+            return 0
+        # знак отрицательный
+        else:
+            if x[v] >= t_plus:
+                return 0
+            # t_minus < x[v] < t_plus
+            if x[v] > t_minus:
+                p_minus = (3 * t - 2 * t_minus - t_plus) / ((t_minus - t_plus) ** 2)
+                r_minus = (t_minus + t_plus - 2 * t) / ((t_minus - t_plus) ** 3)
+                return p_minus * ((x[v] - t_plus) ** 2) + r_minus * ((x[v] - t_plus) ** 3)
+            # x[v] <= t_minus
+            return t - x[v]
 
 
     ### Можно ещё какие-то ф-ции реализовать
