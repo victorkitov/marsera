@@ -477,21 +477,16 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         ### Что такое skip_scrub?
         """
         data_count, data_dim = X.shape
-        terms_count = len(self.terms_list)     # M = 2
-        
-        # функции, ещё не удаленные из множества
-        # изначально все, кроме константной
-        deletable = self.terms_list[1:]
 
         # названия переменных взяты из статьи
         best_K = list(self.terms_list)
         best_lof = ...
-        while terms_count >= 2:
+        for M in range(len(self.terms_list), 1, -1):
             b = float('inf')
             L = list(best_K)
-            for term in deletable:
+            for m in range(M):
                 K = list(L)
-                K.remove(term)
+                K.remove(self.terms_list[m])
                 # считаем lof для K
                 lof = ...
                 if lof < b:
