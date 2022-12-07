@@ -486,7 +486,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
             L = list(best_K)
             for m in range(M):
                 K = list(L)
-                K.remove(self.terms_list[m])
+                K.remove(L[m])
                 # считаем lof для K
                 lof = ...
                 if lof < b:
