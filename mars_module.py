@@ -481,10 +481,10 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         # названия переменных взяты из статьи
         best_K = list(self.terms_list)
         best_lof = ...
-        for M in range(len(self.terms_list), 1, -1):
+        for M in range(len(self.terms_list), 0, -1):
             b = float('inf')
             L = list(best_K)
-            for m in range(M):
+            for m in range(1, M):
                 K = list(L)
                 K.remove(L[m])
                 # считаем lof для K
