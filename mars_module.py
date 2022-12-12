@@ -149,6 +149,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         self.enable_pruning = enable_pruning
         self.feature_importance_type = feature_importance_type
         self.verbose = verbose
+        self.terms_list = [1, ]  # terms_list = [B_1,..., B_M]
 
         ### Пока не реализуем
         # self.allow_missing = allow_missing
@@ -246,7 +247,28 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         t_minus:
         t_plus:
         '''
-        pass
+        # знак положительный
+        if s > 0:
+            if x[v] >= t_plus:
+                return x[v] - t
+            # t_minus < x[v] < t_plus
+            if x[v] > t_minus:
+                p_plus = (2 * t_plus + t_minus - 3 * t) / ((t_plus - t_minus) ** 2)
+                r_plus = (2 * t - t_plus - t_minus) / ((t_plus - t_minus) ** 3)
+                return p_plus * ((x[v] - t_minus) ** 2) + r_plus * ((x[v] - t_minus) ** 3)
+            # x[v] <= t_minus
+            return 0
+        # знак отрицательный
+        else:
+            if x[v] >= t_plus:
+                return 0
+            # t_minus < x[v] < t_plus
+            if x[v] > t_minus:
+                p_minus = (3 * t - 2 * t_minus - t_plus) / ((t_minus - t_plus) ** 2)
+                r_minus = (t_minus + t_plus - 2 * t) / ((t_minus - t_plus) ** 3)
+                return p_minus * ((x[v] - t_plus) ** 2) + r_minus * ((x[v] - t_plus) ** 3)
+            # x[v] <= t_minus
+            return t - x[v]
 
 
     ### Можно ещё какие-то ф-ции реализовать
@@ -254,6 +276,8 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
     @staticmethod
     def term_calculation(x, term):
+        # TODO:
+        # нужно добавить аргумент под тип базисной функции (relu, cubic и т. д.)
         '''
         Ф-ция, реализующая вычисление б.ф. B(x):
             B(x) = [s_1 * (x_(v_1) - t_1)]_+ * ... * [s_Km * (x_(v_Km) - t_Km)]_+
@@ -267,6 +291,8 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         if not isinstance(term, int):
             term_value = 1
             for prod in term:
+                # TODO:
+                # тут сложнее, потому что для cubic будут храниться (s, v, t, t_plus, t_minus)
                 (s, v, t) = prod
                 term_value *= Earth.relu_func(x, s, v, t)
                 if term_value == 0:
@@ -375,16 +401,15 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         # x = (x_1,...,x_d), d - размерность ---> data_dim
 
         
-        terms_list = [1, ]  # terms_list = [B_1,..., B_M]
         data_count, data_dim = X.shape
         terms_count = 2     # M = 2
 
         # создаём б.ф. пока не достигнем макс. кол-ва
         while terms_count <= self.max_terms:
-            best_lof = 10000000  # lof* = inf
+            best_lof = float('inf')  # lof* = inf
 
             # перебираем уже созданные б.ф.
-            for term in terms_list:
+            for term in self.terms_list:
                 # формируем мн-во невалидных координат (уже использованных)
                 not_valid_coords = []
                 # если это не константная б.ф. B_1
@@ -398,6 +423,10 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
                 # перебираем все ещё не занятые координаты
                 for v in valid_coords:
+                    # TODO:
+                    # здесь в переборе нужно дописать версию для cubic
+                    # t_plus и t_minus предлагается выбрать как среднее между 
+                    # t и соседними узлами справа и слева
 
                     # перебираем обучающие данные
                     for ind in range(data_count):
@@ -411,7 +440,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
                             best_term = term
                             best_v = v
                             best_t = t
-            terms_list.append()
+            self.terms_list.append()
                     
 
     def pruning_pass(self, X, y=None,
@@ -422,11 +451,50 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         """
         Отдельно проход назад.
 
+
         Параметры
         ----------
-        ### Заполняется аналогично fit.
+        X : array-like, shape = [m, n], где m - кол-во объектов, n - кол-во признаков
+            Обучающие данные.
+
+
+        y : array-like, optional (default=None), shape = [m, p], где m - кол-во объектов, p - кол-во разных выходов
+            Ответы на обучающих данных.
+
+
+        sample_weight : array-like, optional (default=None), shape = [m], где m - кол-во объектов
+            Пообъектное взвешивание. Веса >= 0. Полезно при несбалансированных дисперсиях распределений над объектами.
+
+        ### как это понимать?
+        output_weight : array-like, optional (default=None), shape = [p], где p - кол-во выходов
+            Взвешивание всех ответов модели для каждого из выходовов после обучения.
+
+
+        ### Пока игнорируем
+        missing : array-like, shape = [m, n], где m - кол-во объектов, n - кол-во признаков.
+            ...
+
+        ### Что такое skip_scrub?
         """
-        pass
+        data_count, data_dim = X.shape
+
+        # названия переменных взяты из статьи
+        best_K = list(self.terms_list)
+        best_lof = ...
+        for M in range(len(self.terms_list), 0, -1):
+            b = float('inf')
+            L = list(best_K)
+            for m in range(1, M):
+                K = list(L)
+                K.remove(L[m])
+                # считаем lof для K
+                lof = ...
+                if lof < b:
+                    b = lof
+                    best_K = K
+                if lof < best_lof:
+                    best_lof = lof
+                    self.terms_list = K
 
 
     def forward_trace(self):
