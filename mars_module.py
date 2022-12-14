@@ -1,3 +1,4 @@
+import copy
 import numpy as np
 from scipy import sparse
 from scipy import optimize.linprog as linprog
@@ -9,8 +10,8 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
     Класс, реализующий MARS.
 
 
-    Вся функциональность из py-earth должна быть сюда перенесена.
-    По возможности надо сохранить оригинальные названия аргументов, атрибутов, методов и т.д.
+    ### Вся функциональность из py-earth должна быть сюда перенесена.
+    ### По возможности надо сохранить оригинальные названия аргументов, атрибутов, методов и т.д.
 
 
     Параметры
@@ -106,26 +107,12 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
     `pruning_pass_record_` : ???
         Информация по обратному проходу.
         ### (тип выхода определяем сами, хотя можно глянуть как делали авторы библиотеки)
-    """ 
 
 
-    ### Множества нужны для verbose, trace и т.д.
-    ### Из py-earth пока не добавлены сюда:
-    ### allow_missing, zero_tol, use_fast, fast_K, fast_h, check_every
-    forward_pass_arg_names = set([
-        'max_terms', 'max_degree', 'allow_missing', 'penalty',
-        'endspan_alpha', 'endspan',
-        'minspan_alpha', 'minspan',
-        'thresh', 'min_search_points', 'allow_linear',
-        'feature_importance_type',
-        'verbose'
-    ])
-    pruning_pass_arg_names = set([
-        'penalty',
-        'feature_importance_type',
-        'verbose'
-    ])
-
+    Методы
+    ----------
+    ...
+    """
 
     def __init__(self, max_terms=None, max_degree=None, allow_missing=False,
                  penalty=None, endspan_alpha=None, endspan=None,
@@ -149,29 +136,199 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         self.enable_pruning = enable_pruning
         self.feature_importance_type = feature_importance_type
         self.verbose = verbose
-        self.terms_list = [1, ]  # terms_list = [B_1,..., B_M]
+        self.terms_list = [1, ] # terms_list = [B_1,..., B_M]
 
         ### Пока не реализуем
-        # self.allow_missing = allow_missing
-        # self.use_fast = use_fast
-        # self.fast_K = fast_K
-        # self.fast_h = fast_h
-        # self.zero_tol = zero_tol
+        self.allow_missing = allow_missing
+        self.use_fast = use_fast
+        self.fast_K = fast_K
+        self.fast_h = fast_h
+        self.zero_tol = zero_tol
+
+
+    ### Множества нужны для verbose, trace и т.д.
+    ### Из py-earth пока не добавлены сюда: allow_missing, zero_tol, use_fast, fast_K, fast_h, check_every.
+    ### После реализации соответсвующих возможностей, добавлять сюда моостветствующие параметры.
+    forward_pass_arg_names = set([
+        'max_terms', 'max_degree', 'allow_missing', 'penalty',
+        'endspan_alpha', 'endspan',
+        'minspan_alpha', 'minspan',
+        'thresh', 'min_search_points', 'allow_linear',
+        'feature_importance_type',
+        'verbose'
+    ])
+    pruning_pass_arg_names = set([
+        'penalty',
+        'feature_importance_type',
+        'verbose'
+    ])
+
+
+    # =====================================Всё, что_связано с базисными ф-ми============================
+
+
+    @staticmethod
+    def term_calculation(x, term):
+        '''
+        Ф-ция, реализующая вычисление б.ф. B(x) с любыми (пока) однотипными множителями:
+            B(x) = multiplier_1(x)+ * ... * multiplier_K(x)
+            или
+            B_1(x) = 1
+
+        Параметры
+        ----------
+        x: объект
+        term: б.ф. ### считаем, что состоит из множителей одинакового типа
+                   ### (пока, хотя мб и не нужна будет такая функциональность) 
+        '''
+        # если это не константная б.ф. B_1(x)
+        if not isinstance(term, int):
+            term_value = 1.
+            for prod in term:
+                term_value *= prod.calculate_func(x)
+                if term_value == 0.:
+                    return term_value
+            return term_value
+        else:
+            return term
+
+    
+    class BaseFunc():
+        """
+        Класс-родитель для всех ф-ций, использующихся в качестве множителей в б.ф.
+        """
+
+        ### TODO
+        ### 1. Подумать, что общего, кроме (s, v, t), можно найти у этих и мб будущих функций.
+        ###    Вспомнить статьи, которые читали. Мб там использовались какие-то ещё ф-ции?
+        ###    Если да, то что у них общего с нашими?
+        ### 2. Подумать, мб есть смысл реализовать класс для константых ф-ций?
+        ###    Какие методы, кроме совсем тривиальных, там будут?
+        ### 3. Подумать, какие ещё методы и атрибуты могли бы пригодиться?
+        ### Ваши идеи:
+        ### ...
+
+        def __init__(self, s, v, t):
+            self.s = s
+            self.v = v
+            self.t = t
+
+
+    class LinearFunc(BaseFunc):
+        """
+        Класс, реализующий линейную функцию.
+            f(x) = s * (x_v - t)
+
+        s: знак
+        v: координата
+        t: порог
+        """
+
+        def __init__(self, s, v, t):
+            super().__init__(s, v, t)
+
+        def calculate_func(self, x):
+            '''
+            Ф-ция, вычисляющая линейную ф-цию.
+
+            Параметры
+            ----------
+            x: объект
+            '''
+            linear = self.s * (x[self.v] - self.t)
+            return linear
+
+
+
+    class ReluFunc(BaseFunc):
+        """
+        Класс, реализующий положительную срезку (усечённая степенная сплайновая ф-ция).
+            f(x) = [s * (x_v - t)]_+
+
+        s: знак
+        v: координата
+        t: порог
+        """
+
+        def __init__(self, s, v, t):
+            super().__init__(s, v, t)
+
+        def calculate_func(self, x):
+            '''
+            Ф-ция, вычисляющая положительную срезку.
+
+            Параметры
+            ----------
+            x: объект
+            '''
+            relu = max(self.s * (x[self.v] - self.t), 0)
+            return relu
+
+
+    class CubicFunc(BaseFunc):
+        """
+        Класс, реализующий кубический усечённый сплайн с непрерывной 1ой производной.
+            ### TODO
+            ### Привести вид такой ф-ции или хотя бы её концепцию.
+        
+        x: объект
+        s: знак
+        v: координата
+        t: порог
+        t_minus:
+        t_plus:
+        """
+
+        def __init__(self, s, v, t, t_minus, t_plus):
+            super().__init__(s, v, t)
+            self.t_minus = t_minus
+            self.t_plus = t_plus
+
+        def calculate_func(self, x):
+            '''
+            Ф-ция, вычисляющая кубический усечённый сплайн.
+            '''
+            # знак положительный
+            if self.s > 0:
+                if x[self.v] >= self.t_plus:
+                    return x[self.v] - self.t
+                # t_minus < x[v] < t_plus
+                if x[self.v] > self.t_minus:
+                    p_plus = (2 * self.t_plus + self.t_minus - 3 * self.t) / ((self.t_plus - self.t_minus) ** 2)
+                    r_plus = (2 * self.t - self.t_plus - self.t_minus) / ((self.t_plus - self.t_minus) ** 3)
+                    return p_plus * ((x[self.v] - self.t_minus) ** 2) + r_plus * ((x[self.v] - self.t_minus) ** 3)
+                # x[v] <= t_minus
+                return 0
+            # знак отрицательный
+            else:
+                if x[self.v] >= self.t_plus:
+                    return 0
+                # t_minus < x[v] < t_plus
+                if x[self.v] > self.t_minus:
+                    p_minus = (3 * self.t - 2 * self.t_minus - self.t_plus) / ((self.t_minus - self.t_plus) ** 2)
+                    r_minus = (self.t_minus + self.t_plus - 2 * self.t) / ((self.t_minus - self.t_plus) ** 3)
+                    return p_minus * ((x[self.v] - self.t_plus) ** 2) + r_minus * ((x[self.v] - self.t_plus) ** 3)
+                # x[v] <= t_minus
+                return self.t - x[self.v]
+
+
+    ### ==================================================Реализация основной функциональности==========================================================
 
 
     ### Дополнительные ф-ции, которые использовались в py-earth. Следовать этому вообще не обязательно,
     ### просто для представления структуры отдельных блоков.
-    # def __eq__(self, other):
-    # def __ne__(self, other):
-    # def _pull_forward_args(self, **kwargs): "Pull named arguments relevant to the forward pass"
-    # def _pull_pruning_args(self, **kwargs): "Pull named arguments relevant to the pruning pass"
-    # def _scrape_labels(self, X): "Try to get labels from input data (for example, if X is a
-                                  # pandas DataFrame).  Return None if no labels can be extracted"
-    # def _scrub_x(self, X, missing, **kwargs): "Sanitize input predictors and extract column names if appropriate"
-    # def _scrub(self, X, y, sample_weight, output_weight, missing, **kwargs): "Sanitize input data"
+    ### def __eq__(self, other):
+    ### def __ne__(self, other):
+    ### def _pull_forward_args(self, **kwargs): "Pull named arguments relevant to the forward pass"
+    ### def _pull_pruning_args(self, **kwargs): "Pull named arguments relevant to the pruning pass"
+    ### def _scrape_labels(self, X): "Try to get labels from input data (for example, if X is a
+        ### pandas DataFrame).  Return None if no labels can be extracted"
+    ### def _scrub_x(self, X, missing, **kwargs): "Sanitize input predictors and extract column names if appropriate"
+    ### def _scrub(self, X, y, sample_weight, output_weight, missing, **kwargs): "Sanitize input data"
 
 
-    ### Если какие-то параметры в последющих функциях не потребуется - ну значит не потребуются. Но для наглядности пусть будут все.
+    ### Если какие-то параметры в последющих функциях не потребуется - ну значит не потребуются.
+    ### Но для наглядности пусть будут все.
     def fit(self, X, y=None,
             sample_weight=None,
             output_weight=None,
@@ -212,96 +369,10 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         xlabels : iterable of strings , optional (empty by default)
            Явное задание имён признаков (столбцов). Кол-во имён должно быть равно кол-ву признаков.
         """
+        # self.forward_pass(X, y, ...)
+        # self.pruning_pass(X, y, ...)
         pass
 
-
-    @staticmethod
-    def relu_func(x, s, v, t):
-        '''
-        Ф-ция, реализующая положительную срезку (усечённая степенная сплайновая ф-ция)
-            [s * (x_v - t)]_+
-
-        Параметры
-        ----------
-        x: 
-        s: знак
-        v: координата
-        t: порог
-        '''
-        relu = max(s * (x[v] - t), 0)
-        return relu
-
-
-    @staticmethod
-    def cubic_func(x, s, v, t, t_minus, t_plus):
-        '''
-        Ф-ция, реализующая кубический усечённый сплайн с непрерывной 1ой производной
-            ...
-
-        Параметры
-        ----------
-        x: 
-        s: знак
-        v: координата
-        t: порог
-        t_minus:
-        t_plus:
-        '''
-        # знак положительный
-        if s > 0:
-            if x[v] >= t_plus:
-                return x[v] - t
-            # t_minus < x[v] < t_plus
-            if x[v] > t_minus:
-                p_plus = (2 * t_plus + t_minus - 3 * t) / ((t_plus - t_minus) ** 2)
-                r_plus = (2 * t - t_plus - t_minus) / ((t_plus - t_minus) ** 3)
-                return p_plus * ((x[v] - t_minus) ** 2) + r_plus * ((x[v] - t_minus) ** 3)
-            # x[v] <= t_minus
-            return 0
-        # знак отрицательный
-        else:
-            if x[v] >= t_plus:
-                return 0
-            # t_minus < x[v] < t_plus
-            if x[v] > t_minus:
-                p_minus = (3 * t - 2 * t_minus - t_plus) / ((t_minus - t_plus) ** 2)
-                r_minus = (t_minus + t_plus - 2 * t) / ((t_minus - t_plus) ** 3)
-                return p_minus * ((x[v] - t_plus) ** 2) + r_minus * ((x[v] - t_plus) ** 3)
-            # x[v] <= t_minus
-            return t - x[v]
-
-
-    ### Можно ещё какие-то ф-ции реализовать
-
-
-    @staticmethod
-    def term_calculation(x, term):
-        # TODO:
-        # нужно добавить аргумент под тип базисной функции (relu, cubic и т. д.)
-        '''
-        Ф-ция, реализующая вычисление б.ф. B(x):
-            B(x) = [s_1 * (x_(v_1) - t_1)]_+ * ... * [s_Km * (x_(v_Km) - t_Km)]_+
-
-        Параметры
-        ----------
-        x: 
-        term:
-        '''
-        # если это не константная б.ф. B_1(x)
-        if not isinstance(term, int):
-            term_value = 1
-            for prod in term:
-                # TODO:
-                # тут сложнее, потому что для cubic будут храниться (s, v, t, t_plus, t_minus)
-                (s, v, t) = prod
-                term_value *= Earth.relu_func(x, s, v, t)
-                if term_value == 0:
-                    return term_value
-            return term_value
-        else:
-            return term
-        
-        
 
     @staticmethod
     def g_calculation(x, terms_list, coeffs_list):
@@ -311,11 +382,11 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
         Параметры
         ----------
-        x: 
-        terms_list:
-        coeffs_list:
+        x: объект
+        terms_list: [B_1, ..., B_M] - список б.ф.
+        coeffs_list: [a_1, ..., a_M] - список коэффициентов
         '''
-        g_value = 0
+        g_value = 0.
         for ind in range(len(terms_list)):
             g_value += coeffs_list[ind] * Earth.term_calculation(x, terms_list[ind])
         return g_value
@@ -402,11 +473,11 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
         
         data_count, data_dim = X.shape
-        terms_count = 2     # M = 2
+        terms_count = 2 # M = 2
 
         # создаём б.ф. пока не достигнем макс. кол-ва
         while terms_count <= self.max_terms:
-            best_lof = float('inf')  # lof* = inf
+            best_lof = float('inf') # lof* = inf
 
             # перебираем уже созданные б.ф.
             for term in self.terms_list:
@@ -415,8 +486,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
                 # если это не константная б.ф. B_1
                 if term != 1:
                     for prod in term:
-                        (s, v, t) = prod
-                        not_valid_coords.append(v)
+                        not_valid_coords.append(prod.v)
                 # формируем мн-во валидных координат
                 valid_coords = [coord for coord in range(0, data_dim)
                                 if coord not in not_valid_coords]
@@ -424,7 +494,6 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
                 # перебираем все ещё не занятые координаты
                 for v in valid_coords:
                     # TODO:
-                    # здесь в переборе нужно дописать версию для cubic
                     # t_plus и t_minus предлагается выбрать как среднее между 
                     # t и соседними узлами справа и слева
 
@@ -439,8 +508,17 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
                             best_lof = lof
                             best_term = term
                             best_v = v
-                            best_t = t
-            self.terms_list.append()
+                            best_t = X[ind, v]
+
+            # создаём новые б.ф.
+            prod_plus = Earth.BaseFunc(-1, best_v, best_t)
+            prod_minus = Earth.BaseFunc(1, best_v, best_t)
+            # добавляем B_M(x) и B_M+1(x)
+            best_term = copy.deepcopy(best_term)
+            self.best_term.append(prod_plus)
+            self.best_term.append(prod_minus)
+            self.terms_list.append(best_term)
+            terms_count += 2 # M <- M + 2
                     
 
     def pruning_pass(self, X, y=None,
@@ -481,7 +559,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         # названия переменных взяты из статьи
         best_K = list(self.terms_list)
         best_lof = ...
-        for M in range(len(self.terms_list), 0, -1):
+        for M in range(len(self.terms_list), 1, -1):
             b = float('inf')
             L = list(best_K)
             for m in range(1, M):
@@ -492,50 +570,9 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
                 if lof < b:
                     b = lof
                     best_K = K
-                if lof < best_lof:
+                if lof <= best_lof:
                     best_lof = lof
                     self.terms_list = K
-
-
-    def forward_trace(self):
-        '''
-        Вывод информации о проходе вперёд.
-        '''
-        pass
-
-
-    def pruning_trace(self):
-        '''
-        Вывод информации о проходе назад.
-        '''
-        pass
-
-
-    def trace(self):
-        '''
-        Вывод информации о проходе вперёд и назад.
-        '''
-        pass
-
-
-    def summary(self):
-        """
-        Описание модели в виде строки.
-        """
-        pass
-
-
-    def summary_feature_importances(self, sort_by=None):
-        """
-        Важность признаков в виде строки.
-
-
-        Параметры
-        ----------
-        sory_by : string, optional
-            Сортировка, если поддерживается, по feature_importance_type ('rrs', 'gcv', 'nb_subsets').
-        """
-        pass
 
 
     def linear_fit(self, X, y=None,
@@ -680,8 +717,73 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         pass
 
 
+    ### ========================================================Вывод информации=======================================================================
+
+
+    class InfoClass():
+        """Класс, реализующий удобный отладочный интерфейс"""
+        ### TODO
+        ### Подумать над структурой.
+        ### Ваши идеи:
+        ### ...
+        pass
+
+
+    def forward_trace(self):
+        '''
+        Вывод информации о проходе вперёд.
+        '''
+        pass
+
+
+    def pruning_trace(self):
+        '''
+        Вывод информации о проходе назад.
+        '''
+        pass
+
+
+    def trace(self):
+        '''
+        Вывод информации о проходе вперёд и назад.
+        '''
+        #self.forward_trace()
+        #self.pruning_trace()
+        pass
+
+
+    def summary(self):
+        """
+        Описание модели в виде строки.
+        """
+        pass
+
+
+    def summary_feature_importances(self, sort_by=None):
+        """
+        Важность признаков в виде строки.
+
+
+        Параметры
+        ----------
+        sory_by : string, optional
+            Сортировка, если поддерживается, по feature_importance_type ('rrs', 'gcv', 'nb_subsets').
+        """
+        pass
+
+
     def get_penalty(self):
         """
         Возвращает параметр сглаживания d из C_new(M) = C(M) + d*M.
         """
-        pass
+        return self.penalty
+
+
+### ==========================================Для всякого====================================================== 
+
+### B(x) = [s_1 * (x_(v_1) - t_1)]_+ * ... * [s_Km * (x_(v_Km) - t_Km)]_+
+
+### TODO
+### Подумать, мб знаете способы проще масштабировать код?
+### Ваши идеи:
+### ...
