@@ -1,7 +1,6 @@
 import copy
 import numpy as np
-from scipy import sparse
-from scipy import optimize.linprog as linprog
+import scipy.optimize
 from sklearn.base import RegressorMixin, BaseEstimator, TransformerMixin
 
 
@@ -136,6 +135,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         self.enable_pruning = enable_pruning
         self.feature_importance_type = feature_importance_type
         self.verbose = verbose
+
         self.terms_list = [1, ] # terms_list = [B_1,..., B_M]
 
         ### Пока не реализуем
@@ -164,11 +164,11 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
     ])
 
 
-    # =====================================Всё, что_связано с базисными ф-ми============================
+    # =====================================Вспомогательные ф-ции============================
 
 
     @staticmethod
-    def term_calculation(x, term):
+    def term_calculation(X, term):
         '''
         Ф-ция, реализующая вычисление б.ф. B(x) с любыми (пока) однотипными множителями:
             B(x) = multiplier_1(x)+ * ... * multiplier_K(x)
@@ -177,20 +177,87 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
         Параметры
         ----------
-        x: объект
+        X: матрица объектов
         term: б.ф. ### считаем, что состоит из множителей одинакового типа
-                   ### (пока, хотя мб и не нужна будет такая функциональность) 
         '''
-        # если это не константная б.ф. B_1(x)
+        # если это не константная б.ф.
         if not isinstance(term, int):
             term_value = 1.
             for prod in term:
-                term_value *= prod.calculate_func(x)
+                term_value *= prod.calculate_func(X)
                 if term_value == 0.:
                     return term_value
             return term_value
         else:
             return term
+
+
+    @staticmethod
+    def g_calculation(X, terms_list, coeffs):
+        '''
+        Ф-ция, реализующая ф-цию g(x):
+            g(x) = a_1 * B_1(x) + ... + a_M * B_M(x)
+
+        Параметры
+        ----------
+        X: матрица объектов
+        terms_list: [B_1, ..., B_M] - список б.ф.
+        coeffs: [a_1, ..., a_M] - массив коэффициентов
+        '''
+        g_value = 0.
+        for ind in range(len(terms_list)):
+            g_value += coeffs[ind] * Earth.term_calculation(X, terms_list[ind])
+        return g_value
+
+    @staticmethod
+    def c_calculation(term_count):
+        '''
+        Ф-ция, вычисляющая поправочный коэффициент C(M).
+
+        term_count: кол-во б.ф.
+        '''
+        pass
+
+
+
+    @staticmethod
+    def gcv(coeffs, f, terms_list, X, y, d=3):
+        '''
+        Generalized Cross-Validation criterion:
+            GCV(M) = 1/N * sum([y_i - f(x_i)]^2) / [1 - C_correct(M)/N]^2
+            C(M) = tr(B @ (B^T @ B)^(-1) @ B^T) + 1
+            C_correct(M) = C(M) + d * M
+            C(M) - "число лин. нез. б.ф."
+        
+        coeffs: [a_1, ..., a_M] - массив коэффициентов,
+            по которым производится оптимизация
+        f:
+        M: (хотя мб и не надо передавать)
+        X: матрица
+        y: вектор 
+        d: параметр сглаживания (обычно 2-4) чем больше, тем меньше узлов
+        '''
+        term_count = len(terms_list)
+        y_pred = Earth.g_calculation(X, terms_list, coeffs)
+        mse = np.mean((y - y_pred) ** 2)
+        correct_c = Earth.c_calculation(term_count) + d * term_count
+        correct_mse = mse / (1 - correct_c / y.size) ** 2
+        return correct_mse
+
+
+    @staticmethod
+    def minimize(f, x0, args=(), method='nelder-mead', options={'xatol': 1e-8, 'disp': True}):
+        """
+        Ф-ция численной минимизации. Обёртка над scipy.optimize.minimize.
+
+        f: минимизируемая ф-ция вида f(x, *args) -> float)
+        args: доп. аргументы ф-ции f
+        x_0: начальное приближение
+        method: метод оптимизации
+        options: доп. опции
+            """
+        argmin = scipy.optimize.minimize(f, x0, method=method, args=args, options=options)
+        return argmin
 
     
     class BaseFunc():
@@ -372,42 +439,8 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         # self.forward_pass(X, y, ...)
         # self.pruning_pass(X, y, ...)
         pass
-
-
-    @staticmethod
-    def g_calculation(x, terms_list, coeffs_list):
-        '''
-        Ф-ция, реализующая ф-цию g(x):
-            g(x) = a_1 * B_1(x) + ... + a_M * B_M(x)
-
-        Параметры
-        ----------
-        x: объект
-        terms_list: [B_1, ..., B_M] - список б.ф.
-        coeffs_list: [a_1, ..., a_M] - список коэффициентов
-        '''
-        g_value = 0.
-        for ind in range(len(terms_list)):
-            g_value += coeffs_list[ind] * Earth.term_calculation(x, terms_list[ind])
-        return g_value
-
-
-    @staticmethod
-    def GCV(f, d=3):
-        '''
-        Generalized Cross-Validation criterion:
-            GCV() = 1/N * sum[(y_i - f(x_i))^2]/[1 - C_correct(M)/N]^2
-            C(M) = tr(B @ (B^T @ B)^(-1) @ B^T) + 1
-            C_correct(M) = C(M) + d * M
-            C(M) - "число лин. нез. б.ф."
         
-        f: 
-        M: (хотя мб и не надо передавать)
-        d: параметр сглаживания (обычно 2-4) чем больше, тем меньше узлов
-        '''
-        pass
         
-
     def forward_pass(self, X, y=None,
                      sample_weight=None,
                      output_weight=None,
@@ -503,7 +536,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
                         if Earth.term_calculation(X[ind], term) == 0:
                             continue
                         g = ...
-                        lof = ...
+                        lof = Earth.minimize(gcv, x0)
                         if lof < best_lof:
                             best_lof = lof
                             best_term = term
@@ -513,11 +546,12 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
             # создаём новые б.ф.
             prod_plus = Earth.BaseFunc(-1, best_v, best_t)
             prod_minus = Earth.BaseFunc(1, best_v, best_t)
-            # добавляем B_M(x) и B_M+1(x)
-            best_term = copy.deepcopy(best_term)
-            self.best_term.append(prod_plus)
-            self.best_term.append(prod_minus)
-            self.terms_list.append(best_term)
+            new_term_1 = copy.deepcopy(best_term)
+            new_term_2 = copy.deepcopy(best_term)
+            self.new_term_1.append(prod_plus)
+            self.new_term_2.append(prod_minus)
+            self.terms_list.append(new_term_1)
+            self.terms_list.append(new_term_2)
             terms_count += 2 # M <- M + 2
                     
 
