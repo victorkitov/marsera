@@ -136,8 +136,6 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         self.feature_importance_type = feature_importance_type
         self.verbose = verbose
 
-        self.terms_list = [1, ] # terms_list = [B_1,..., B_M]
-
         ### Пока не реализуем
         self.allow_missing = allow_missing
         self.use_fast = use_fast
@@ -145,10 +143,15 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         self.fast_h = fast_h
         self.zero_tol = zero_tol
 
+        # Нами введённые параметры
+        self.lof = Earth.gcv # LOF ф-ция
+        self.method = 'nelder-mead' # метод оптимизации
+        self.terms_list = [1, ] # terms_list = [B_1,..., B_M]
+
 
     ### Множества нужны для verbose, trace и т.д.
     ### Из py-earth пока не добавлены сюда: allow_missing, zero_tol, use_fast, fast_K, fast_h, check_every.
-    ### После реализации соответсвующих возможностей, добавлять сюда моостветствующие параметры.
+    ### После реализации соответсвующих возможностей, добавлять сюда соответствующие параметры.
     forward_pass_arg_names = set([
         'max_terms', 'max_degree', 'allow_missing', 'penalty',
         'endspan_alpha', 'endspan',
@@ -178,18 +181,14 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         Параметры
         ----------
         X: матрица объектов
-        term: б.ф. ### считаем, что состоит из множителей одинакового типа
+        term: б.ф. ### пока считаем, что состоит из множителей одинакового типа
         '''
         # если это не константная б.ф.
+        term_values = np.ones(X.shape[0])
         if not isinstance(term, int):
-            term_value = 1.
             for prod in term:
-                term_value *= prod.calculate_func(X)
-                if term_value == 0.:
-                    return term_value
-            return term_value
-        else:
-            return term
+                term_values *= prod.calculate_func(X)
+        return term_values
 
 
     @staticmethod
@@ -204,36 +203,55 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         terms_list: [B_1, ..., B_M] - список б.ф.
         coeffs: [a_1, ..., a_M] - массив коэффициентов
         '''
-        g_value = 0.
+        g = np.zeros(X.shape[0])
         for ind in range(len(terms_list)):
-            g_value += coeffs[ind] * Earth.term_calculation(X, terms_list[ind])
-        return g_value
+            g += coeffs[ind] * Earth.term_calculation(X, terms_list[ind])
+        return g
+
 
     @staticmethod
-    def c_calculation(term_count):
+    def b_calculation(X, terms_list):
+        '''
+        Ф-ция, вычисляющая матрицу B:
+            B[i,m] = B_m(x_i)
+            ### в статье Фридмана в этом месте ошибка - перепутаны индексы
+
+        X: матрица объектов
+        terms_list: [B_1, ..., B_M] - список б.ф.
+        '''
+        term_count = len(terms_list)
+        B = np.empty((X.shape[0], term_count))
+        for ind in range(term_count):
+            B[:ind] = Earth.term_calculation(X, terms_list[ind])
+        return B
+
+
+    @staticmethod
+    def c_calculation(X, terms_list):
         '''
         Ф-ция, вычисляющая поправочный коэффициент C(M).
+            C(M) = tr(B @ (B^T @ B)^(-1) @ B^T) + 1
+            B[i,m] = B_m(x_i)
 
-        term_count: кол-во б.ф.
+        X: матрица объектов
+        terms_list: [B_1, ..., B_M] - список б.ф.
         '''
-        pass
-
-
+        B = Earth.b_calculation(X, terms_list)
+        C = np.trace(B @ np.linalg.inv(B.T @ B) @ B.T) + 1
+        return C
+        
 
     @staticmethod
-    def gcv(coeffs, f, terms_list, X, y, d=3):
+    def gcv(coeffs, terms_list, X, y, d=3):
         '''
-        Generalized Cross-Validation criterion:
+        Generalized Cross-Validation criterion (GCV):
             GCV(M) = 1/N * sum([y_i - f(x_i)]^2) / [1 - C_correct(M)/N]^2
-            C(M) = tr(B @ (B^T @ B)^(-1) @ B^T) + 1
             C_correct(M) = C(M) + d * M
+            C(M) = tr(B @ (B^T @ B)^(-1) @ B^T) + 1
             C(M) - "число лин. нез. б.ф."
         
-        coeffs: [a_1, ..., a_M] - массив коэффициентов,
-            по которым производится оптимизация
-        f:
-        M: (хотя мб и не надо передавать)
-        X: матрица
+        coeffs: [a_1, ..., a_M] - массив коэффициентов, по которым производится оптимизация
+        X: матрица объектов
         y: вектор 
         d: параметр сглаживания (обычно 2-4) чем больше, тем меньше узлов
         '''
@@ -250,9 +268,9 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         """
         Ф-ция численной минимизации. Обёртка над scipy.optimize.minimize.
 
-        f: минимизируемая ф-ция вида f(x, *args) -> float)
+        f: минимизируемая ф-ция вида f(x, *args) -> float
         args: доп. аргументы ф-ции f
-        x_0: начальное приближение
+        x0: начальное приближение
         method: метод оптимизации
         options: доп. опции
             """
@@ -263,6 +281,10 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
     class BaseFunc():
         """
         Класс-родитель для всех ф-ций, использующихся в качестве множителей в б.ф.
+
+        s: знак
+        v: координата
+        t: порог
         """
 
         ### TODO
@@ -294,15 +316,15 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         def __init__(self, s, v, t):
             super().__init__(s, v, t)
 
-        def calculate_func(self, x):
+        def calculate_func(self, X):
             '''
             Ф-ция, вычисляющая линейную ф-цию.
 
             Параметры
             ----------
-            x: объект
+            X: матрица объектов
             '''
-            linear = self.s * (x[self.v] - self.t)
+            linear = self.s * (X[:,self.v] - self.t)
             return linear
 
 
@@ -320,15 +342,15 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         def __init__(self, s, v, t):
             super().__init__(s, v, t)
 
-        def calculate_func(self, x):
+        def calculate_func(self, X):
             '''
             Ф-ция, вычисляющая положительную срезку.
 
             Параметры
             ----------
-            x: объект
+            X: матрица объектов
             '''
-            relu = max(self.s * (x[self.v] - self.t), 0)
+            relu = max(self.s * (X[:,self.v] - self.t), 0)
             return relu
 
 
@@ -351,10 +373,16 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
             self.t_minus = t_minus
             self.t_plus = t_plus
 
-        def calculate_func(self, x):
+        def calculate_func(self, X):
             '''
             Ф-ция, вычисляющая кубический усечённый сплайн.
+
+            Параметры
+            ----------
+            X: матрица объектов
             '''
+            ### TODO
+            ### сделать векторно
             # знак положительный
             if self.s > 0:
                 if x[self.v] >= self.t_plus:
@@ -379,9 +407,6 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
                 return self.t - x[self.v]
 
 
-    ### ==================================================Реализация основной функциональности==========================================================
-
-
     ### Дополнительные ф-ции, которые использовались в py-earth. Следовать этому вообще не обязательно,
     ### просто для представления структуры отдельных блоков.
     ### def __eq__(self, other):
@@ -392,6 +417,9 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         ### pandas DataFrame).  Return None if no labels can be extracted"
     ### def _scrub_x(self, X, missing, **kwargs): "Sanitize input predictors and extract column names if appropriate"
     ### def _scrub(self, X, y, sample_weight, output_weight, missing, **kwargs): "Sanitize input data"
+
+
+    ### ==================================================Реализация основной функциональности==========================================================
 
 
     ### Если какие-то параметры в последющих функциях не потребуется - ну значит не потребуются.
@@ -535,8 +563,9 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
                         # учитываем только нетривиальные пороги
                         if Earth.term_calculation(X[ind], term) == 0:
                             continue
-                        g = ...
-                        lof = Earth.minimize(gcv, x0)
+                        x0 = np.zeros(terms_count - 1)
+                        res = Earth.minimize(self.lof, x0)
+                        lof = res.fun
                         if lof < best_lof:
                             best_lof = lof
                             best_term = term
