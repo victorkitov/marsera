@@ -541,7 +541,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
             best_lof = float('inf') # lof* = inf
 
             # перебираем уже созданные б.ф.
-            for term in self.terms_list:
+            for term_num, term in enumerate(self.terms_list):
                 # формируем мн-во невалидных координат (уже использованных)
                 not_valid_coords = []
                 # если это не константная б.ф. B_1
@@ -558,7 +558,15 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
                     # t_plus и t_minus предлагается выбрать как среднее между 
                     # t и соседними узлами справа и слева
 
-                    # перебираем обучающие данные
+                    ## перебираем обучающие данные
+                    ## Возможно лучше отсортированные сразу хранить рядом с датасетом
+                    ## Как и матрицу B
+                    best_thres, lof = self.knot_optimization(
+                            X, y, terms=self.terms_list, new_basis=(term_num, term, v),
+                            sorted_features=np.sort(X[:, v]))
+
+                    """
+                    По идее я перенес все это в функцию. Поправь, если не прав
                     for ind in range(data_count):
                         # учитываем только нетривиальные пороги
                         if Earth.term_calculation(X[ind], term) == 0:
@@ -566,11 +574,12 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
                         x0 = np.zeros(terms_count - 1)
                         res = Earth.minimize(self.lof, x0)
                         lof = res.fun
-                        if lof < best_lof:
-                            best_lof = lof
-                            best_term = term
-                            best_v = v
-                            best_t = X[ind, v]
+                    """
+                    if lof < best_lof:
+                        best_lof = lof
+                        best_term = term
+                        best_v = v
+                        best_t = best_thres # было X[ind, v]
 
             # создаём новые б.ф.
             prod_plus = Earth.BaseFunc(-1, best_v, best_t)
@@ -665,6 +674,95 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         """
         pass
 
+
+    def knot_optimization(self, X, y, terms, new_basis, sorted_features, splines_type='default', **kwargs):
+        """
+        Функция находит лучший узел для рассматриваемой пары hinge функций
+
+        Параметры:
+        X - Обучающая выборка
+
+        y - Отлклики
+
+        terms - список всех базисных функций (те которые подбираем сюда не входят)
+                На самом деле, для производительности лучше вынести подсчет mtr в основной цикл,
+                Станет в разы меньше вычислений (надо будет обновлять всего 2 строчки)
+
+        new_basis - (turm_num, term, v), v - координата которую пытаемся добавить в базисную функцию term
+
+        sorted_features - список координат, которые перебираем (отсортированы по возрастанию)
+
+        returns:
+        пара (best_treshold, lof)
+        """
+
+        term_num, testing_term, v = new_basis
+        B = Earth.b_calculation(X, terms).T  ##  Здесь B - MxN, для удобства
+        B = np.vstack([B, np.empty((2, X.shape[0]))])
+
+        B[-2] = B[term_num] * X[:, v]
+        thres = sorted_features[-1]    ## Проверяем максимальный порог
+        B[-1] = B[term_num] * np.clip(X[:, v] - thres, 0)  ##  По идее сюда можно классы вставить
+        basis_means = B.mean(axis=1)
+        y_mean = y.mean()
+
+        ## B^T * alpha = y  --->  (B*B^T) * alpha = (B*y)
+        c = B @ (y - y_mean())
+        V = (B - basis_means[..., np.newaxis]) @ B.T
+        tmp_ind = np.where(X[:, v] >= thres)[0]
+
+        ##  s(u)^2 в статье Фридмана
+        additive_prev = ((B[term_num, tmp_ind] * (X[tmp_ind, v] - thres)).sum())**2
+        
+        lof = Earth.gcv_by_B_V(B.T, V)  
+        ##  надо бы в gcv добавить возможнось считать gcv по матрицам
+        ##  вычислять коэффы по матрице, а потом заново считать матрицу в gcv
+        ##  много времени тратит
+        best_threshold = thres
+
+
+        ##  цикл по остальным порогам
+        ##  Вся арифметика из 30 стр. Фридмана
+        prev_thres = thres
+        for thres in sorted_features[-2::-1]:
+            if Earth.term_calculation(thres, testing_term) == 0:
+                continue
+            tmp_ind =  np.where(thres <= X[:, v] < prev_thres)[0]
+            other_elems_ind = np.where(X[:, v] >= prev_thres)[0]
+            c[-1] += ((y[tmp_ind] * B[term_num, tmp_ind]
+                      * (X[tmp_ind, v] - thres)).sum() + (prev_thres - thres)
+                      * (y[other_elems_ind] * B[term_num, other_elems_ind]).sum())
+
+            new_row = (((B[tmp_ind] - basis_means[tmp_ind][..., np.newaxis])
+                       @ (B[term_num] * X[tmp_ind, v])[..., np.newaxis])
+
+                       + (prev_thres - thres)
+                       * ((B[other_elems_ind] - basis_means[other_elems_ind][..., np.newaxis])
+                       @ B[term_num]))
+
+            V[-1, :-1] =+ new_row[:-1]
+            V[:-1, -1] = V[-1, :-1]
+
+
+            new_ind = np.where(X[:, v] >= thres)[0]
+            additive_new = ((B[term_num, new_ind] * (X[new_ind, v] - thres)).sum())**2
+
+            V[-1, -1] += (
+                ((B[term_num, tmp_ind] * (X[tmp_ind, v] - thres))**2).sum()
+
+                 + (prev_thres - thres) * (B[term_num, other_elems_ind]**2)
+                 * (2*X[other_elems_ind, v] -thres - prev_thres)
+
+                 + (additive_prev - additive_new) / X.shape[0])
+                
+            additive_prev = additive_new
+            try_lof = Earth.gcv_by_B_V(B.T, V)  ##  Аналогично
+
+            ## выбираем лучший порог
+            if try_lof < lof:
+                best_threshold = thres
+                lof = try_lof
+        return (best_threshold, lof)
 
     def predict(self, X, missing=None, skip_scrub=False):
         """
