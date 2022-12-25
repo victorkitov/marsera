@@ -685,10 +685,10 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         y - Отлклики
 
         terms - список всех базисных функций (те которые подбираем сюда не входят)
-                На самом деле, для производительности лучше вынести подсчет B в основной цикл,
+                На самом деле, для производительности лучше вынести подсчет mtr в основной цикл,
                 Станет в разы меньше вычислений (надо будет обновлять всего 2 строчки)
 
-        new_basis - (turm_num, term, v), v - координата которую пытаемся добавить в базисную функцию term
+        new_basis - (term_num, term, v), v - координата которую пытаемся добавить в базисную функцию term
 
         sorted_features - список координат, которые перебираем (отсортированы по возрастанию)
 
@@ -712,19 +712,19 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
         B[-2] = B[term_num] * X[:, v]
         thres = sorted_features[-1]    ## Проверяем максимальный порог
-        B[-1] = B[term_num] * np.clip(X[:, v] - thres, 0)  ##  По идее сюда можно классы вставить
+        B[-1] = B[term_num] * np.clip(X[:, v] - thres, 0, None)  ##  По идее сюда можно классы вставить
         basis_means = B.mean(axis=1)
         y_mean = y.mean()
 
         ## B^T * alpha = y  --->  (B*B^T) * alpha = (B*y)
-        c = B @ (y - y_mean())
+        c = B @ (y - y_mean)
         V = (B - basis_means[..., np.newaxis]) @ B.T
 
 
-        tmp_ind = np.where(X[:, v] >= thres)[0]
+        tmp_ind = (X[:, v] >= thres).nonzero()
         ##  s(u)^2 в статье Фридмана
         additive_prev = ((B[term_num, tmp_ind] * (X[tmp_ind, v] - thres)).sum())**2
-
+        
         lof = Earth.gcv_by_B_V(B.T, V)  
         ##  надо бы в gcv добавить возможнось считать gcv по матрицам
         ##  вычислять коэффы по матрице, а потом заново считать матрицу в gcv
@@ -739,28 +739,28 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         for thres in sorted_features[-2::-1]:
             if Earth.term_calculation(thres, testing_term) == 0:
                 continue
-            tmp_ind =  np.where(thres <= X[:, v] < prev_thres)[0]
-            other_elems_ind = np.where(X[:, v] >= prev_thres)[0]
-            c[-1] += ((y[tmp_ind] * B[term_num, tmp_ind]
+            tmp_ind =  (thres <= X[:, v] < prev_thres).nonzero()
+            other_elems_ind = (X[:, v] >= prev_thres).nonzero()
+            c[-1] += (((y[tmp_ind] - y_mean) * B[term_num, tmp_ind]
                       * (X[tmp_ind, v] - thres)).sum() + (prev_thres - thres)
                       * (y[other_elems_ind] * B[term_num, other_elems_ind]).sum())
 
-            new_row = (((B[tmp_ind] - basis_means[tmp_ind][..., np.newaxis])
+            new_row = (((B[term_num, tmp_ind] - basis_means[tmp_ind][..., np.newaxis])
                        @ (B[term_num] * X[tmp_ind, v])[..., np.newaxis])
 
                        + (prev_thres - thres)
                        * ((B[other_elems_ind] - basis_means[other_elems_ind][..., np.newaxis])
                        @ B[term_num]))
 
-            V[-1, :-1] += new_row[:-1]
+            V[-1, :-1] =+ new_row[:-1]
             V[:-1, -1] = V[-1, :-1]
 
 
-            new_ind = np.where(X[:, v] >= thres)[0]
+            new_ind = (X[:, v] >= thres).nonzero()
             additive_new = ((B[term_num, new_ind] * (X[new_ind, v] - thres)).sum())**2
 
             V[-1, -1] += (
-                ((B[term_num, tmp_ind] * (X[tmp_ind, v] - thres))**2).sum()
+                ((B[term_num, tmp_ind] * (X[tmp_ind, v] - thres))**2).sum() +
 
                  + (prev_thres - thres) * (B[term_num, other_elems_ind]**2)
                  * (2*X[other_elems_ind, v] -thres - prev_thres)
