@@ -685,7 +685,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         y - Отлклики
 
         terms - список всех базисных функций (те которые подбираем сюда не входят)
-                На самом деле, для производительности лучше вынести подсчет mtr в основной цикл,
+                На самом деле, для производительности лучше вынести подсчет B в основной цикл,
                 Станет в разы меньше вычислений (надо будет обновлять всего 2 строчки)
 
         new_basis - (turm_num, term, v), v - координата которую пытаемся добавить в базисную функцию term
@@ -700,6 +700,16 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         B = Earth.b_calculation(X, terms).T  ##  Здесь B - MxN, для удобства
         B = np.vstack([B, np.empty((2, X.shape[0]))])
 
+        basis_zero_counter = np.isclose(B[term_num], 0.).sum()
+        thres_step = -np.log2(-1/(self.shape[1]*basis_zero_counter)        ##  Шаг в переборе порогов
+                              * np.log(1 - self.minspan_alpha)) / 2.5
+        thres_margin = 3 - np.log2(self.endspan_alpha / self.shape[1])     ##  Отсуп от граничных порогов
+
+        sorted_features = sorted_features[thres_margin, -thres_margin, thres_step]
+        if sorted_features.size == 0:   ##  Остались ли вообще пороги
+            return (None, float('inf'))
+
+
         B[-2] = B[term_num] * X[:, v]
         thres = sorted_features[-1]    ## Проверяем максимальный порог
         B[-1] = B[term_num] * np.clip(X[:, v] - thres, 0)  ##  По идее сюда можно классы вставить
@@ -709,11 +719,12 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         ## B^T * alpha = y  --->  (B*B^T) * alpha = (B*y)
         c = B @ (y - y_mean())
         V = (B - basis_means[..., np.newaxis]) @ B.T
-        tmp_ind = np.where(X[:, v] >= thres)[0]
 
+
+        tmp_ind = np.where(X[:, v] >= thres)[0]
         ##  s(u)^2 в статье Фридмана
         additive_prev = ((B[term_num, tmp_ind] * (X[tmp_ind, v] - thres)).sum())**2
-        
+
         lof = Earth.gcv_by_B_V(B.T, V)  
         ##  надо бы в gcv добавить возможнось считать gcv по матрицам
         ##  вычислять коэффы по матрице, а потом заново считать матрицу в gcv
@@ -723,6 +734,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
         ##  цикл по остальным порогам
         ##  Вся арифметика из 30 стр. Фридмана
+
         prev_thres = thres
         for thres in sorted_features[-2::-1]:
             if Earth.term_calculation(thres, testing_term) == 0:
@@ -740,7 +752,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
                        * ((B[other_elems_ind] - basis_means[other_elems_ind][..., np.newaxis])
                        @ B[term_num]))
 
-            V[-1, :-1] =+ new_row[:-1]
+            V[-1, :-1] += new_row[:-1]
             V[:-1, -1] = V[-1, :-1]
 
 
