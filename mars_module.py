@@ -381,30 +381,29 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
             ----------
             X: матрица объектов
             '''
-            ### TODO
-            ### сделать векторно
+
+            # точки, в которых X[v] удовлетворяет условиям:
+            # t_plus <= X[v]:
+            greater_than_t_plus = (X[:, self.v] >= self.t_plus)
+            # t_minus < X[v] < t_plus:
+            between_t_plus_t_minus = (self.t_minus < X[:, self.v]) & (X[:, self.v] < self.t_plus)
+            # X[v] <= t_minus:
+            less_than_t_minus = X[:, self.v] <= self.t_minus
+
             # знак положительный
             if self.s > 0:
-                if x[self.v] >= self.t_plus:
-                    return x[self.v] - self.t
-                # t_minus < x[v] < t_plus
-                if x[self.v] > self.t_minus:
-                    p_plus = (2 * self.t_plus + self.t_minus - 3 * self.t) / ((self.t_plus - self.t_minus) ** 2)
-                    r_plus = (2 * self.t - self.t_plus - self.t_minus) / ((self.t_plus - self.t_minus) ** 3)
-                    return p_plus * ((x[self.v] - self.t_minus) ** 2) + r_plus * ((x[self.v] - self.t_minus) ** 3)
-                # x[v] <= t_minus
-                return 0
+                p_plus = (2 * self.t_plus + self.t_minus - 3 * self.t) / ((self.t_plus - self.t_minus) ** 2)
+                r_plus = (2 * self.t - self.t_plus - self.t_minus) / ((self.t_plus - self.t_minus) ** 3)
+
+                return greater_than_t_plus * (X[:, self.v] - self.t) + \
+                       between_t_plus_t_minus * (p_plus * ((X[:, self.v] - self.t_minus) ** 2) + r_plus * ((X[:, self.v] - self.t_minus) ** 3))
+                
             # знак отрицательный
-            else:
-                if x[self.v] >= self.t_plus:
-                    return 0
-                # t_minus < x[v] < t_plus
-                if x[self.v] > self.t_minus:
-                    p_minus = (3 * self.t - 2 * self.t_minus - self.t_plus) / ((self.t_minus - self.t_plus) ** 2)
-                    r_minus = (self.t_minus + self.t_plus - 2 * self.t) / ((self.t_minus - self.t_plus) ** 3)
-                    return p_minus * ((x[self.v] - self.t_plus) ** 2) + r_minus * ((x[self.v] - self.t_plus) ** 3)
-                # x[v] <= t_minus
-                return self.t - x[self.v]
+            p_minus = (3 * self.t - 2 * self.t_minus - self.t_plus) / ((self.t_minus - self.t_plus) ** 2)
+            r_minus = (self.t_minus + self.t_plus - 2 * self.t) / ((self.t_minus - self.t_plus) ** 3)
+
+            return between_t_plus_t_minus * (p_minus * ((X[:, self.v] - self.t_plus) ** 2) + r_minus * ((X[:, self.v] - self.t_plus) ** 3)) + \
+                   less_than_t_minus * (self.t - X[:, self.v])
 
 
     ### Дополнительные ф-ции, которые использовались в py-earth. Следовать этому вообще не обязательно,
