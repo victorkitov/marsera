@@ -381,30 +381,29 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
             ----------
             X: матрица объектов
             '''
-            ### TODO
-            ### сделать векторно
+
+            # точки, в которых X[v] удовлетворяет условиям:
+            # t_plus <= X[v]:
+            greater_than_t_plus = (X[:, self.v] >= self.t_plus)
+            # t_minus < X[v] < t_plus:
+            between_t_plus_t_minus = (self.t_minus < X[:, self.v]) & (X[:, self.v] < self.t_plus)
+            # X[v] <= t_minus:
+            less_than_t_minus = X[:, self.v] <= self.t_minus
+
             # знак положительный
             if self.s > 0:
-                if x[self.v] >= self.t_plus:
-                    return x[self.v] - self.t
-                # t_minus < x[v] < t_plus
-                if x[self.v] > self.t_minus:
-                    p_plus = (2 * self.t_plus + self.t_minus - 3 * self.t) / ((self.t_plus - self.t_minus) ** 2)
-                    r_plus = (2 * self.t - self.t_plus - self.t_minus) / ((self.t_plus - self.t_minus) ** 3)
-                    return p_plus * ((x[self.v] - self.t_minus) ** 2) + r_plus * ((x[self.v] - self.t_minus) ** 3)
-                # x[v] <= t_minus
-                return 0
+                p_plus = (2 * self.t_plus + self.t_minus - 3 * self.t) / ((self.t_plus - self.t_minus) ** 2)
+                r_plus = (2 * self.t - self.t_plus - self.t_minus) / ((self.t_plus - self.t_minus) ** 3)
+
+                return greater_than_t_plus * (X[:, self.v] - self.t) + \
+                       between_t_plus_t_minus * (p_plus * ((X[:, self.v] - self.t_minus) ** 2) + r_plus * ((X[:, self.v] - self.t_minus) ** 3))
+                
             # знак отрицательный
-            else:
-                if x[self.v] >= self.t_plus:
-                    return 0
-                # t_minus < x[v] < t_plus
-                if x[self.v] > self.t_minus:
-                    p_minus = (3 * self.t - 2 * self.t_minus - self.t_plus) / ((self.t_minus - self.t_plus) ** 2)
-                    r_minus = (self.t_minus + self.t_plus - 2 * self.t) / ((self.t_minus - self.t_plus) ** 3)
-                    return p_minus * ((x[self.v] - self.t_plus) ** 2) + r_minus * ((x[self.v] - self.t_plus) ** 3)
-                # x[v] <= t_minus
-                return self.t - x[self.v]
+            p_minus = (3 * self.t - 2 * self.t_minus - self.t_plus) / ((self.t_minus - self.t_plus) ** 2)
+            r_minus = (self.t_minus + self.t_plus - 2 * self.t) / ((self.t_minus - self.t_plus) ** 3)
+
+            return between_t_plus_t_minus * (p_minus * ((X[:, self.v] - self.t_plus) ** 2) + r_minus * ((X[:, self.v] - self.t_plus) ** 3)) + \
+                   less_than_t_minus * (self.t - X[:, self.v])
 
 
     ### Дополнительные ф-ции, которые использовались в py-earth. Следовать этому вообще не обязательно,
@@ -679,29 +678,34 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         """
         Функция находит лучший узел для рассматриваемой пары hinge функций
 
-        Параметры:
-        X - Обучающая выборка
+        Параметры
+        ----------
+        X : Обучающая выборка
 
-        y - Отлклики
 
-        terms - список всех базисных функций (те которые подбираем сюда не входят)
-                На самом деле, для производительности лучше вынести подсчет mtr в основной цикл,
-                Станет в разы меньше вычислений (надо будет обновлять всего 2 строчки)
+        y : Отлклики
 
-        new_basis - (term_num, term, v), v - координата которую пытаемся добавить в базисную функцию term
 
-        sorted_features - список координат, которые перебираем (отсортированы по возрастанию)
+        terms : список всех базисных функций (те которые подбираем сюда не входят)
 
-        returns:
-        пара (best_treshold, lof)
+
+        new_basis : (term_num, term, v), v - координата которую пытаемся добавить в базисную функцию term
+
+
+        sorted_features : список координат, которые перебираем (отсортированы по возрастанию)
+
+
+        Выход
+        ----------
+        (best_treshold, lof) : лучший порог и LOF на нем.
         """
 
         term_num, testing_term, v = new_basis
         B = Earth.b_calculation(X, terms)  ##  Теперь здесь B - NxM
         B = np.hstack([B, np.empty((X.shape[0], 2))])
 
-        basis_zero_counter = np.isclose(B[:,term_num], 0.).sum()
-        thres_step = -np.log2(-1/(self.shape[1]*basis_zero_counter)        ##  Шаг в переборе порогов
+        basis_nonzero_counter = B.shape[0] - np.isclose(B[:, term_num], 0.).sum()
+        thres_step = -np.log2(-1/(self.shape[1]*basis_nonzero_counter)        ##  Шаг в переборе порогов
                               * np.log(1 - self.minspan_alpha)) / 2.5
         thres_margin = 3 - np.log2(self.endspan_alpha / self.shape[1])     ##  Отсуп от граничных порогов
 
@@ -710,9 +714,9 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
             return (None, float('inf'))
 
 
-        B[:,-2] = B[:,term_num] * X[:, v]
+        B[:, -2] = B[:, term_num] * X[:, v]
         thres = sorted_features[-1]    ## Проверяем максимальный порог
-        B[:,-1] = B[:,term_num] * np.clip(X[:,v] - thres, 0, None)  ##  По идее сюда можно классы вставить
+        B[:, -1] = B[:, term_num] * np.maximum(X[:, v] - thres, 0)  ##  По идее сюда можно классы вставить
         basis_means = B.mean(axis=0)
         y_mean = y.mean()
 
@@ -721,9 +725,9 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         V = (B.T - basis_means[..., np.newaxis]) @ B
 
 
-        tmp_ind = (X[:,v] >= thres).nonzero()
+        tmp_ind = (X[:, v] >= thres).nonzero()
         ##  s(u)^2 в статье Фридмана
-        additive_prev = ((B[tmp_ind,term_num] * (X[tmp_ind,v] - thres)).sum())**2
+        additive_prev = (B[tmp_ind, term_num] * (X[tmp_ind, v] - thres)).sum()**2
         
         lof = Earth.gcv_by_B_V(B, V)  
         ##  надо бы в gcv добавить возможнось считать gcv по матрицам
@@ -739,34 +743,36 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         for thres in sorted_features[-2::-1]:
             if Earth.term_calculation(thres, testing_term) == 0:
                 continue
-            tmp_ind = (thres <= X[:,v] < prev_thres).nonzero()
-            other_elems_ind = (X[:,v] >= prev_thres).nonzero()
-            c[-1] += (((y[tmp_ind] - y_mean) * B[tmp_ind,term_num]
-                      * (X[tmp_ind,v] - thres)).sum() + (prev_thres - thres)
-                      * (y[other_elems_ind] * B[other_elems_ind,term_num]).sum())
+            tmp_ind = (thres <= X[:, v] < prev_thres).nonzero()
+            other_elems_ind = (X[:, v] >= prev_thres).nonzero()
+            c[-1] += (((y[tmp_ind] - y_mean) * B[tmp_ind, term_num]
+                      * (X[tmp_ind, v] - thres)).sum()
+
+                      + (prev_thres - thres) * ((y[other_elems_ind] - y_mean)
+                      * B[other_elems_ind, term_num]).sum())
 
             new_row = (((B[tmp_ind, :-1].T - basis_means[:-1][..., np.newaxis])
-                       @ (B[tmp_ind,term_num] * (X[tmp_ind, v] - thres))[..., np.newaxis])
+                       @ (B[tmp_ind, term_num] * (X[tmp_ind, v] - thres))[..., np.newaxis])
 
                        + (prev_thres - thres)
                        * ((B[other_elems_ind, :-1].T - basis_means[:-1][..., np.newaxis])
-                       @ B[other_elems_ind,term_num][..., np.newaxis])).ravel()
+                       @ B[other_elems_ind, term_num][..., np.newaxis])).ravel()
 
             V[-1, :-1] += new_row
             V[:-1, -1] = V[-1, :-1]
 
 
-            new_ind = (X[:,v] >= thres).nonzero()
-            additive_new = ((B[new_ind,term_num] * (X[new_ind,v] - thres)).sum())**2
+            new_ind = (X[:, v] >= thres).nonzero()
+            additive_new = ((B[new_ind, term_num] * (X[new_ind, v] - thres)).sum())**2
 
             V[-1, -1] += (
-                ((B[tmp_ind,term_num] * (X[tmp_ind, v] - thres))**2).sum() +
+                ((B[tmp_ind, term_num] * (X[tmp_ind, v] - thres))**2).sum()
 
-                 + (prev_thres - thres) * ((B[other_elems_ind,term_num]**2)
+                 + (prev_thres - thres) * ((B[other_elems_ind, term_num]**2)
                  * (2*X[other_elems_ind, v] - thres - prev_thres)).sum()
 
                  + (additive_prev - additive_new) / X.shape[0])
-                
+
             additive_prev = additive_new
             try_lof = Earth.gcv_by_B_V(B.T, V)  ##  Аналогично
 
@@ -775,6 +781,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
                 best_threshold = thres
                 lof = try_lof
         return (best_threshold, lof)
+
 
     def predict(self, X, missing=None, skip_scrub=False):
         """
