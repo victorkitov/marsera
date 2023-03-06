@@ -1,6 +1,7 @@
 import copy
 import numpy as np
 import scipy.optimize
+from numpy import linalg as LA
 from sklearn.base import RegressorMixin, BaseEstimator, TransformerMixin
 
 
@@ -140,6 +141,9 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         self.feature_importance_type = feature_importance_type
         self.verbose = verbose
 
+        if self.penalty == None:
+            self.penalty = 3
+
         ### Пока не реализуем
         self.allow_missing = allow_missing
         self.use_fast = use_fast
@@ -150,13 +154,14 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
         # Нами введённые параметры
         self.lof = self.gcv # LOF ф-ция
-        self.best_lof = float('inf') # наименьшее полученное значение lof
+        self.best_lof = float('inf') # лучшее полученное значение lof
         #self.method = 'nelder-mead' # метод оптимизации
         ### TODO: проверить и дописать
         # term_list = [B_1, ..., B_M] - список б.ф. (term)
         # B_m = [mult_1, ..., mult_{K_m}] - список множителей (mult) б.ф.
         self.term_list = [[self.ConstantFunc(1.)], ]
         self.coeffs = np.array([1]) # коэффициенты при б.ф.
+        self.B = None # матрица объекты-б.ф. чтобы не пересчитывать лишний раз
 
 
     ### Множества нужны для verbose, trace и т.д.
@@ -199,7 +204,6 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
     def term_calculation(self, X, term):
         '''
-        ### TODO: Поддержка неоднотипных множителей.
         Ф-ция, реализующая вычисление б.ф. B(x) с однотипными множителями:
             B(x) = mult_1(x) * ... * mult_K(x)
             или
@@ -217,6 +221,8 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         term_values = 1
         for mult in term:
             term_values *= mult.calculate_func(X)
+            print('mult.calculate_func(X):', mult.calculate_func(X))
+            print('term_values:', term_values)
         return term_values
 
 
@@ -240,7 +246,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         return B
 
 
-    def c_correct_calculation(self, B, term_list):
+    def c_correct_calculation(self, B):
         '''
         Ф-ция, вычисляющая поправочный коэффициент C(M).
             C(M) = trace(B @ (B^T @ B)^(-1) @ B^T) + 1
@@ -250,19 +256,24 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         Параметры
         ----------
         B: матрица объекты-б.ф.
-        term_list: [B_1, ..., B_M] - список б.ф.
 
 
         Выход
         ----------
         '''
-        C = np.trace(B @ np.linalg.inv(B.T @ B) @ B.T) + 1
-        C_correct = C + self.penalty * len(term_list)
+        V = B.T @ B
+
+        # сдвигаем СЗ на половину машинной точности float32
+        half_eps = np.finfo(np.float32).eps / 2
+        V += half_eps * np.eye(V.shape[0])
+
+        C = np.trace(B @ LA.inv(V) @ B.T) + 1
+        C_correct = C + self.penalty * B.shape[1]
         return C_correct
         
 
     #def gcv(self, coeffs, *args):
-    def gcv(self, X, y, B, coeffs, term_list):
+    def gcv(self, B, y, coeffs):
         '''
         Generalized Cross-Validation criterion (GCV):
             GCV(M) = 1/N * sum([y_i - f(x_i)]^2) / [1 - C_correct(M)/N]^2
@@ -273,19 +284,17 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         
         Параметры
         ----------
-        X: матрица объектов
-        y: вектор ответов на объектах
         B: матрица объекты-б.ф.
+        y: вектор ответов на объектах
         coeffs: вектор коэффициентов
-        term_list: [B_1, ..., B_M] - список б.ф.
 
 
         Выход
         ----------
         '''
-        y_pred = self.g_calculation(X, term_list, coeffs)
+        y_pred = self.g_calculation(B, coeffs)
         mse = np.mean((y - y_pred) ** 2)
-        correct_c = self.c_correct_calculation(B, term_list)
+        correct_c = self.c_correct_calculation(B)
         correct_mse = mse / (1 - correct_c / y.size) ** 2
         return correct_mse
 
@@ -328,20 +337,33 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         Выход
         ----------
         """
+        # V @ a = (L @ L^T) @ a = L @ (L^T @ a) = L @ b = c
+        # Где: b = L^T @ a
+
         V = B.T @ B
         c = B.T @ y
 
-        # V @ a = (L @ L^T) @ a = L @ (L^T @ a) = L @ b = c
-        # Где: b = L^T @ a
-        L = np.linalg.cholesky(V)
+        # проверка на симметричность матрицы V
+        if not np.allclose(V, V.T):
+            raise LA.LinAlgError('Asymmetric matrix!')
+
+        # сдвигаем СЗ на половину машинной точности float32
+        ### хотя тип матрицы float64, но такой добавки не хватает
+        half_eps = np.finfo(np.float32).eps / 2
+        V += half_eps * np.eye(V.shape[0])
+
+        if not np.all(LA.eigvalsh(V) > 0):
+            raise LA.LinAlgError('Matrix is not positive definite!')
+        
+        L = LA.cholesky(V)
 
         # Решение системы L @ b = c
-        b = np.linalg.solve(L, c)
+        b = LA.solve(L, c)
 
         # Решение системы L^T @ a = b
-        a = np.linalg.solve(L.T, b)
+        a = LA.solve(L.T, b)
 
-        ### TODO: Мб есть решатель, в котором можно явно выбрать метод Холецкого?
+        ### TODO: Мб есть оптимизатор, в котором можно явно выбрать метод Холецкого?
         return a
 
 
@@ -493,7 +515,12 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
             ----------
             X: матрица объектов
             '''
-            hinge = np.max(self.s * (X[:, self.v] - self.t), 0)
+            print('X[:, self.v]:', X[:, self.v])
+            print('self.t', self.t)
+            print('self.s', self.s)
+            linear = self.s * (X[:, self.v] - self.t)
+            hinge = np.where(linear > 0, linear, 0)
+            print('hinge:', hinge)
             return hinge
 
 
@@ -741,21 +768,24 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
                         # создаём новые множители
                         mult_with_plus = self.ReluFunc(-1, v, t)
                         mult_with_minus = self.ReluFunc(1, v, t)
+
                         # создаём потенциальные б.ф.
                         ### мб нужно deepcopy
-                        term_with_plus = copy.copy(term)
-                        term_with_minus = copy.copy(term)
+                        term_with_plus = list(term)
+                        term_with_minus = list(term)
                         term_with_plus.append(mult_with_plus)   # B_m * [+(x[v] - t)]_+
                         term_with_minus.append(mult_with_minus) # B_m * [-(x[v] - t)]_+
+
                         # создаём список с новыми б.ф.
-                        term_list = copy.copy(self.term_list)
+                        term_list = list(self.term_list)
                         term_list.append(term_with_plus)
                         term_list.append(term_with_minus)
 
-                        # находим оптимальные коэфф-ты, решая СЛАУ методом Холецкого
+                        # находим оптимальные коэфф-ты, решая СЛАУ методом Холецкого,
+                        #   считаем lof
                         B = self.b_calculation(X, term_list)
                         coeffs = self.calculate_coeffs(B, y)
-                        lof = self.lof(X, y, B, coeffs, term_list)
+                        lof = self.lof(B, y, coeffs)
                         if lof < self.best_lof:
                             self.best_lof = lof
                             best_term = term
@@ -766,10 +796,11 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
             # создаём оптимальные множители
             mult_with_plus = self.ReluFunc(-1, best_v, best_t)
             mult_with_minus = self.ReluFunc(1, best_v, best_t)
+
             # создаём новые б.ф.
-            ### мб нужно deepcopy
-            term_with_plus = copy.copy(best_term)
-            term_with_minus = copy.copy(best_term)
+            ### мб нужно copy.deepcopy
+            term_with_plus = list(best_term)
+            term_with_minus = list(best_term)
             term_with_plus.append(mult_with_plus)   # B_M
             term_with_minus.append(mult_with_minus) # B_{M+1}
             self.term_list.append(term_with_plus)
@@ -811,36 +842,32 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
         ### Что такое skip_scrub?
         """
-        data_count, data_dim = X.shape
         term_count = len(self.term_list)
 
         # названия переменных взяты из статьи
-        best_K = list(self.term_list) # лучший локальный набор б.ф. определённого кол-ва
-        #x0 = np.zeros(term_count - 1)
-        #res = self.minimize(self.lof, x0)
-        B = self.b_calculation(X, self.term_list)
-        coeffs = self.calculate_coeffs(B, y)
-        best_lof = self.lof(X, self.term_list, coeffs)
-        self.coeffs = coeffs
+        best_K = list(self.term_list) # лучший локальный набор определённого кол-ва б.ф.
         for M in range(term_count, 1, -1): # M, M-1, ..., 2
             b = float('inf')
             L = list(best_K)
+
             # для очередного прореженного списка поочерёдно удаляем входящие в него б.ф.
             #   для определения кандидата на удаление
             for m in range(1, M):
                 K = list(L)
-                K.remove(L[m])
-                # считаем lof без очередной б.ф.
-                #x0 = np.zeros(term_count - 1)
-                #res = self.minimize(self.lof, x0, args=(K, X, y, self.penalty))
-                #lof = res.fun
+                K.pop(m)
+
+                # находим оптимальные коэфф-ты, считаем lof без очередной б.ф.
+                B = self.b_calculation(X, K)
+                coeffs = self.calculate_coeffs(B, y)
+                lof = self.lof(B, y, coeffs)
+
                 if lof < b:
                     # локальное улучшение
                     b = lof
                     best_K = K
-                if lof <= best_lof:
+                if lof <= self.best_lof:
                     # глобальное улучшение
-                    best_lof = lof
+                    self.best_lof = lof
                     self.term_list = K
                     self.coeffs = coeffs
 
@@ -892,12 +919,16 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         Выход
         ----------
         y : array of shape = [m] или [m, p], где m - кол-во объектов, p - кол-во выходов
-            ### TODO правильно ли понял, что такое p
+            ### TODO Множественная регрессия. Правильно понял?
             Прогнозы.
         """
         # подсчёт ф-ции g(x) на оптимальном наборе б.ф. и их коэффициентов
-        result = self.g_calculation(X, self.term_list, self.coeffs)
-        return result
+        print('self.term_list:', self.term_list)
+        print('X', X)
+        B = self.b_calculation(X, self.term_list)
+        print('B:', B)
+        res = self.g_calculation(B, self.coeffs)
+        return res
 
 
     def predict_deriv(self, X, variables=None, missing=None):
@@ -954,7 +985,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
     def score_samples(self, X, y=None, missing=None):
         """
-        ### Не очень понял что это надо разобраться, чтобы потом можно было сравнивать свою реализацию и их.
+        ### Не очень понял что это надо разобраться,.
 
         Параметры
         ----------
@@ -989,7 +1020,8 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         получившихся базисных функций.
             Матрица, содержащая значения базисных функций, вычисленных во всех объектах.
         """
-        pass
+        B = self.b_calculation(X, self.term_list)
+        return B
 
 
     ### ========================================================Вывод информации=======================================================================
@@ -999,8 +1031,6 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         """Класс, реализующий удобный отладочный интерфейс"""
         ### TODO
         ### Подумать над структурой.
-        ### Ваши идеи:
-        ### ...
         pass
 
 
