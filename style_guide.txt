@@ -18,5 +18,4 @@
 - массив ключ_значение: key_value, например изображение-его рейтинг: images_scores, images_scores[num][0]=image, images_scores[num][1]=score
 - словарь пар ключ-значение: keys2values, например изображение->его рейтинг: images2scores, images2scores[img] = score
 - структура множество objects_set, например множество картин: images_set
-
 - docstring для каждой ф-ции
