@@ -126,6 +126,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
             fast_h=None, smooth=None, enable_pruning=True,
             feature_importance_type=None, verbose=0):
 
+        ### TODO: число б.ф. должно быть меньше, чем размерность объектов d 
         self.max_terms = max_terms
         self.max_degree = max_degree
         self.penalty = penalty
@@ -159,7 +160,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         ### TODO: проверить и дописать
         # term_list = [B_1, ..., B_M] - список б.ф. (term)
         # B_m = [mult_1, ..., mult_{K_m}] - список множителей (mult) б.ф.
-        self.term_list = [[self.ConstantFunc(1.)], ]
+        self.term_list = self.TermListClass([[self.ConstantFunc(1.)], ])
         self.coeffs = np.array([1]) # коэффициенты при б.ф.
         self.B = None # матрица объекты-б.ф. чтобы не пересчитывать лишний раз
 
@@ -182,8 +183,29 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
     ])
 
 
-    # =====================================Вспомогательные ф-ции============================
+    # =====================================Вспомогательные классы и ф-ции============================
     ### TODO Уменьшить кол-во пересчётов матрицы B.
+
+    ### Мб можно хранить в более удобном виде?    
+    class TermListClass(list):
+        """
+        Класс, реализующий представление мн-ва б.ф.
+        """
+
+        def __init__(self, term_list):
+            super().__init__(term_list)
+        #    self.term_list = term_list
+        #    return self
+
+        def __repr__(self):
+            s = ''
+            for term in self:
+                for mult in term:
+                    s += '[' + str(mult) + '], '
+                s += '\n'
+            return s
+
+    
     def g_calculation(self, B, coeffs):
         '''
         Ф-ция, реализующая ф-цию g(x):
@@ -221,8 +243,6 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         term_values = 1
         for mult in term:
             term_values *= mult.calculate_func(X)
-            print('mult.calculate_func(X):', mult.calculate_func(X))
-            print('term_values:', term_values)
         return term_values
 
 
@@ -515,12 +535,8 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
             ----------
             X: матрица объектов
             '''
-            print('X[:, self.v]:', X[:, self.v])
-            print('self.t', self.t)
-            print('self.s', self.s)
             linear = self.s * (X[:, self.v] - self.t)
             hinge = np.where(linear > 0, linear, 0)
-            print('hinge:', hinge)
             return hinge
 
 
@@ -730,6 +746,10 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
         # создаём б.ф. пока не достигнем макс. кол-ва
         while term_count <= self.max_terms:
+            
+            # Может произойти ситуация, когда добавление очередной пары б.ф. не приводит к улучшению.
+            # В таком случае мы досрочно завершаем проход вперёд.
+            flag_improve_lof = False
 
             # перебираем уже созданные б.ф.
             for term in self.term_list:
@@ -759,12 +779,6 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
                             continue
                         t = x[0, v]
 
-                        #print(f'term_count: {term_count - 1}, v: {v}, ind: {ind}')
-                        #x0 = np.zeros(term_count - 1)
-                        #res = self.minimize(self.lof, x0,
-                        #                    args=(self.term_list, x, y, self.penalty))
-                        #lof = res.fun
-
                         # создаём новые множители
                         mult_with_plus = self.ReluFunc(-1, v, t)
                         mult_with_minus = self.ReluFunc(1, v, t)
@@ -787,13 +801,18 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
                         coeffs = self.calculate_coeffs(B, y)
                         lof = self.lof(B, y, coeffs)
                         if lof < self.best_lof:
+                            flag_improve_lof = True
                             self.best_lof = lof
                             best_term = term
                             best_v = v
                             best_t = t
                             self.coeffs = coeffs
 
-            # создаём оптимальные множители
+
+            if not flag_improve_lof:
+                break
+
+            # создаём оптимальные множители, если было улучшение lof
             mult_with_plus = self.ReluFunc(-1, best_v, best_t)
             mult_with_minus = self.ReluFunc(1, best_v, best_t)
 
@@ -923,10 +942,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
             Прогнозы.
         """
         # подсчёт ф-ции g(x) на оптимальном наборе б.ф. и их коэффициентов
-        print('self.term_list:', self.term_list)
-        print('X', X)
         B = self.b_calculation(X, self.term_list)
-        print('B:', B)
         res = self.g_calculation(B, self.coeffs)
         return res
 
@@ -1082,6 +1098,14 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         Возвращает параметр сглаживания d из C_correct(M) = C(M) + d*M.
         """
         return self.penalty
+
+
+    def _get_term_list(self):
+        for term in self.term_list:
+            for mult in term:
+                print(mult)
+            print('\n')
+
 
 
 ### ==========================================Для всякого====================================================== 
