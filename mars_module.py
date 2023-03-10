@@ -186,7 +186,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
     # =====================================Вспомогательные классы и ф-ции============================
     ### TODO Уменьшить кол-во пересчётов матрицы B.
 
-    ### Мб можно хранить в более удобном виде?    
+    ### Мб можно хранить в более удобном виде?
     class TermListClass(list):
         """
         Класс, реализующий представление мн-ва б.ф.
@@ -292,7 +292,6 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         return C_correct
         
 
-    #def gcv(self, coeffs, *args):
     def gcv(self, B, y, coeffs):
         '''
         Generalized Cross-Validation criterion (GCV):
@@ -598,7 +597,129 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
             return less_than_t_minus * (self.t - X[:, self.v]) + \
                    between_t_plus_t_minus * (p_minus * ((X[:, self.v] - self.t_plus) ** 2) +
                                              r_minus * ((X[:, self.v] - self.t_plus) ** 3))
-                   
+
+
+    def knot_optimization(self, X, y, terms, new_basis, sorted_features, splines_type='default', **kwargs):
+        """
+        Ф-ция находит лучший узел для рассматриваемой пары hinge функций.
+
+        Параметры
+        ----------
+        X : Обучающая выборка
+        y : Отлклики
+        terms : список всех б.ф. (те, которые подбираем, сюда не входят)
+        new_basis : (term_num, term, v), v - координата, которую пытаемся добавить в б.ф. term
+        sorted_features : список координат, которые перебираем (отсортированы по возрастанию)
+        ### Не знаю зачем нам нужно передавать sorted_features, если мы и так передаём X?
+
+
+        Выход
+        ----------
+        (best_threshold, lof) : лучший порог и LOF на нём
+        """
+
+        data_count, data_dim = X.shape
+        term_num, testing_term, v = new_basis
+
+        B = self.b_calculation(X, terms)
+        B = np.hstack([B, np.empty((data_count, 2))])
+
+
+        # прореживание мн-ва перебираемых порогов
+        basis_nonzero_counter = data_count - np.isclose(B[:, term_num], 0.).sum()
+
+        ### TODO: Проверка на корректность атрибутов с исключениями.
+        # L(alpha) - шаг в переборе порогов
+        if self.minspan == -1:
+            thres_step = -np.log2(-1 / (data_dim * basis_nonzero_counter) *
+                              np.log(1 - self.minspan_alpha)) / 2.5
+        else:
+            thres_step = self.endspan
+
+        # Le(alpha) - отсуп от граничных порогов
+        if self.endspan == -1:
+            thres_margin = 3 - np.log2(self.endspan_alpha / data_dim)
+        else:
+            thres_margin = self.endspan
+
+        sorted_features = sorted_features[thres_margin:-thres_margin:thres_step]
+
+        # остались ли пороги после прореживания
+        if sorted_features.size == 0:
+            return (None, float('inf'))
+        
+
+        B[:, -2] = B[:, term_num] * X[:, v] # B_m(x) * x[v]
+        thres = sorted_features[-1] ## Проверяем максимальный порог
+        ###  По идее сюда можно классы вставить
+        B[:, -1] = B[:, term_num] * np.maximum(X[:, v] - thres, 0) # B_m(x) * (x[v] - t)_+
+        b_mean = B.mean(axis=1)
+        y_mean = y.mean()
+
+        # B @ a = y ---> (B^T @ B) @ a = (B^T @ y)
+        ### TODO: Проверить целесообразность нормализации только одного слагаемого.
+        ### Попробовать без нормализации и с полной нормализацией.
+        c = B.T @ (y - y_mean)
+        V = (B - b_mean).T @ B
+
+        tmp_ind = (X[:, v] >= thres).nonzero()
+        s_prev = (B[tmp_ind, term_num] * (X[tmp_ind, v] - thres)).sum() # s(u) в статье Фридмана
+        
+        ### Где-то в одном месте считать матрицу V
+        coeffs = self.calculate_coeffs(B, y)
+        lof = self.lof(B, y, coeffs)
+        best_threshold = thres
+        ### ???надо бы в gcv добавить возможнось считать gcv по матрицам
+        ### вычислять коэффы по матрице, а потом заново считать матрицу в gcv
+        ### много времени тратит
+
+
+        # цикл по остальным порогам
+        prev_thres = thres
+        for thres in sorted_features[-2::-1]:
+            if self.term_calculation(thres, testing_term) == 0:
+                continue
+            tmp_ind = (thres <= X[:, v] < prev_thres).nonzero()
+            other_elems_ind = (X[:, v] >= prev_thres).nonzero()
+            # c[M+1]
+            c[-1] += ((y[tmp_ind] - y_mean) * B[tmp_ind, term_num] *
+                       (X[tmp_ind, v] - thres)).sum() + \
+                      (prev_thres - thres) * ((y[other_elems_ind] - y_mean) *
+                                               B[other_elems_ind, term_num]).sum()
+
+            # V[i,M+1], i = 1..M => V[M+1,i], i = 1..M
+            col = (((B[tmp_ind, :-1] - b_mean[:-1]) * 
+                        B[tmp_ind, term_num] * (X[tmp_ind, v] - thres))).sum(axis=0) + \
+                        (((B[other_elems_ind, :-1] - b_mean[:-1]) *
+                        B[other_elems_ind, term_num] * (prev_thres - thres))).sum(axis=0)
+
+            V[:-1, -1] += col
+            V[-1, :-1] = V[:-1, -1] # в силу симметричночсти
+
+            # V[M+1,M+1]
+            new_ind = (X[:, v] >= thres).nonzero()
+            s_new = (B[new_ind, term_num] * (X[new_ind, v] - thres)).sum()
+
+            V[-1, -1] += ((B[tmp_ind, term_num] * (X[tmp_ind, v] - thres))**2).sum() + \
+                         ((prev_thres - thres) * B[other_elems_ind, term_num]**2 *
+                          (2 * X[other_elems_ind, v] - thres - prev_thres)).sum() + \
+                         (s_prev**2 - s_new**2) / data_count
+
+            s_prev = s_new
+            ### Внутрь надо передавать пересчитанную матрицу V
+            ### Так а по итогу какие б.ф. мы оставляем: старые или новые?
+            ### Если старые, то эквивалентны ли предсказания g и g'?
+            ### А хотя мы g' используем просто для того чтобы считать lof
+            coeffs = self.calculate_coeffs(B, y)
+            try_lof = self.lof(B, y, coeffs)
+            best_threshold = thres
+
+            ### выбираем лучший порог
+            if try_lof < lof:
+                best_threshold = thres
+                lof = try_lof
+        return (best_threshold, lof)
+
 
     ### Дополнительные ф-ции, которые использовались в py-earth. Следовать этому вообще не обязательно,
     ### просто для представления структуры отдельных блоков.
@@ -1099,12 +1220,6 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         """
         return self.penalty
 
-
-    def _get_term_list(self):
-        for term in self.term_list:
-            for mult in term:
-                print(mult)
-            print('\n')
 
 
 
