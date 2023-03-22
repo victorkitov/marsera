@@ -126,7 +126,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
             fast_h=None, smooth=None, enable_pruning=True,
             feature_importance_type=None, verbose=0):
 
-        ### TODO: число б.ф. должно быть меньше, чем размерность объектов d 
+        ### TODO: число б.ф. должно быть меньше, чем размерность объектов d
         self.max_terms = max_terms
         self.max_degree = max_degree
         self.penalty = penalty
