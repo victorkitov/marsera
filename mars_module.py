@@ -58,7 +58,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
 
     endspan : int, optional (default=-1)
-        Ручное задание интервала данных между узлом и краем.
+        Ручное задание интервала между узлом и краем.
 
 
     minspan_alpha : float, optional, probability between 0 and 1 (default=0.05)
@@ -66,7 +66,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
 
     minspan : int, optional (default=-1)
-        Ручное задание минимального интервала данных между соседними узлами.
+        Ручное задание минимального интервала между соседними узлами.
 
 
     enable_pruning : bool, optional (default=True)
@@ -126,7 +126,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
             fast_h=None, smooth=None, enable_pruning=True,
             feature_importance_type=None, verbose=0):
 
-        ### TODO: число б.ф. должно быть меньше, чем размерность объектов d
+        ### TODO число б.ф. должно быть меньше, чем размерность объектов d
         self.max_terms = max_terms
         self.max_degree = max_degree
         self.penalty = penalty
@@ -154,14 +154,16 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         self.check_every = check_every
 
         # Нами введённые параметры
+        ### TODO добавить поддержку не только GCV.
+        ### В частности - поддержку произвольной ф-ции. Для оптимизации использовать численные методы.
+        self.method = 'nelder-mead' # метод оптимизации
         self.lof = self.gcv # LOF ф-ция
         self.best_lof = float('inf') # лучшее полученное значение lof
-        #self.method = 'nelder-mead' # метод оптимизации
-        ### TODO: проверить и дописать
         # term_list = [B_1, ..., B_M] - список б.ф. (term)
-        # B_m = [mult_1, ..., mult_{K_m}] - список множителей (mult) б.ф.
+        # B_m = [mult_{m,1}, ..., mult_{m,K_m}] - список множителей (mult) б.ф. B_m
+        ### TODO мб сделать специальный класс для б.ф.?
         self.term_list = self.TermListClass([[self.ConstantFunc(1.)], ])
-        self.coeffs = np.array([1]) # коэффициенты при б.ф.
+        self.coeffs = None # коэффициенты при б.ф.
         self.B = None # матрица объекты-б.ф. чтобы не пересчитывать лишний раз
 
 
@@ -189,13 +191,13 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
     ### Мб можно хранить в более удобном виде?
     class TermListClass(list):
         """
-        Класс, реализующий представление мн-ва б.ф.
+        Класс, реализующий представление мн-ва б.ф. в виде списка б.ф.
+        б.ф. тоже представляется обёрткой над списком составляющих его множителей.
+        TODO дописать
         """
 
         def __init__(self, term_list):
             super().__init__(term_list)
-        #    self.term_list = term_list
-        #    return self
 
         def __repr__(self):
             s = ''
@@ -204,6 +206,16 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
                     s += '[' + str(mult) + '], '
                 s += '\n'
             return s
+        
+
+    class TermClass(list):
+        """
+        Класс, реализующий представление б.ф. в виде списка составляющих его множителей.
+        TODO дописать
+        """
+
+        def __init__(self, term):
+            super().__init__(term)
 
     
     def g_calculation(self, B, coeffs):
@@ -219,6 +231,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
         Выход
         ----------
+        вектор значений ф-ции g(x) на эл-тах обуч.
         '''
         g = B @ coeffs
         return g
@@ -226,23 +239,22 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
     def term_calculation(self, X, term):
         '''
-        Ф-ция, реализующая вычисление б.ф. B(x) с однотипными множителями:
-            B(x) = mult_1(x) * ... * mult_K(x)
-            или
-            B(x) = 1
+        Ф-ция, реализующая вычисление б.ф. B_m(x):
+            B_m(x) = mult_{m,1}(x) * ... * mult_{m,K_m}(x)
 
         Параметры
         ----------
         X: матрица объектов
-        term: б.ф.
+        term: б.ф. B_m(x)
 
         
         Выход
         ----------
+        значения б.ф. B_m
         '''
         term_values = 1
         for mult in term:
-            term_values *= mult.calculate_func(X)
+            term_values *= mult.calculate(X)
         return term_values
 
 
@@ -259,20 +271,24 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
         Выход
         ----------
+        матрица B
         '''
-        B = np.empty((X.shape[0], len(term_list)))
-        for ind in range(len(term_list)):
+        data_count, term_count = X.shape[0], len(term_list)
+        B = np.empty((data_count, term_count))
+
+        for ind in range(term_count):
             B[:, ind] = self.term_calculation(X, term_list[ind])
         return B
 
 
-    def c_correct_calculation(self, B):
+    def c_calculation(self, B):
         '''
-        Ф-ция, вычисляющая поправочный коэффициент C(M).
+        Ф-ция, вычисляющая поправочный коэффициент C_correct(M).
             C(M) = trace(B @ (B^T @ B)^(-1) @ B^T) + 1
             C_correct(M) = C(M) + d*M
             B[i,m] = B_m(x_i)
-
+        ### TODO: добавить простую эвристику вычисления C из книжки
+            
         Параметры
         ----------
         B: матрица объекты-б.ф.
@@ -280,42 +296,79 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
         Выход
         ----------
+        поправочный коэффициент C_correct(M)
         '''
-        V = B.T @ B
+        term_count = B.shape[1]
 
-        # сдвигаем СЗ на половину машинной точности float32
-        half_eps = np.finfo(np.float32).eps / 2
-        V += half_eps * np.eye(V.shape[0])
+        # сдвигаем СЗ матрицы V на половину машинной точности float32
+        V = B.T @ B
+        V += np.finfo(np.float32).eps / 2
 
         C = np.trace(B @ LA.inv(V) @ B.T) + 1
-        C_correct = C + self.penalty * B.shape[1]
+        C_correct = C + self.penalty * term_count
         return C_correct
+    
+
+    def l_and_le_calculation(self, b, data_dim):
+        '''
+        Ф-ция, вычисляющая L(alpha) и Le(alpha):
+            L(alpha) задаёт шаг из порогов между соседними узлами
+            Le(alpha) задаёт отступ из порогов для граничных узлов 
+        Смысл - сглаживание, скользящее окно.
+            
+        Параметры
+        ----------
+        b: вектор - значения б.ф. B_m на объектах из обуч. выборки
+        data_dim: размерность объекта
+
+
+        Выход
+        ----------
+        (L(alpha), Le(alpha))
+        '''
+        term_nonzero_count = np.count_nonzero(b)
+
+        if self.minspan == None:
+            minspan = -np.log2(-1 / (data_dim * term_nonzero_count) *
+                               np.log(1 - self.minspan_alpha)) / 2.5
+        else:
+            minspan = self.minspan
+
+        if self.endspan == None:
+            endspan = 3 - np.log2(self.endspan_alpha / data_dim)
+        else:
+            endspan = self.endspan
+
+        return (minspan, endspan)
         
 
     def gcv(self, B, y, coeffs):
         '''
+        ### TODO: реализовать в виде класса
         Generalized Cross-Validation criterion (GCV):
             GCV(M) = 1/N * sum([y_i - f(x_i)]^2) / [1 - C_correct(M)/N]^2
             C_correct(M) = C(M) + d*M
             C(M) = trace(B @ (B^T @ B)^(-1) @ B^T) + 1
-            Смысл C - "число лин. нез. б.ф."
-            Смысл GCV - скорректированный MSE, учитывающий возрастание дисперсии при увеличении кол-ва б.ф. 
+            Смысл C - число лин. нез. б.ф.
+            Смысл GCV - скорректированный MSE, учитывающий возрастание дисперсии, вызванное увеличением кол-ва б.ф. 
         
         Параметры
         ----------
         B: матрица объекты-б.ф.
         y: вектор ответов на объектах
-        coeffs: вектор коэффициентов
+        coeffs: вектор коэфф-ов
 
 
         Выход
         ----------
+        значение GCV
         '''
+        data_count = y.size
         y_pred = self.g_calculation(B, coeffs)
         mse = np.mean((y - y_pred) ** 2)
-        correct_c = self.c_correct_calculation(B)
-        correct_mse = mse / (1 - correct_c / y.size) ** 2
-        return correct_mse
+        c = self.c_calculation(B)
+        mse_correct = mse / (1 - c / data_count) ** 2
+        return mse_correct
 
 
     def minimize(self, f, x0, args, method='nelder-mead', options={'disp': True}):
@@ -339,28 +392,26 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         return argmin
 
 
-    def calculate_coeffs(self, B, y):
+    def coeffs_calculation(self, V, c):
         """
-        Ф-ция, вычисляющая коэффициенты с помощью псевдорешения СЛАУ (B @ a = y) методом Холецкого:
-        (B^T @ B) @ a = B^T @ y => V @ a = c, V = L @ L^T
+        Ф-ция, аналитически вычисляющая коэфф-ты МНК методом Холецкого:
+        V @ a = c, V = L @ L^T
         Где:
             V - симметричная, положительно определённая матрица
             L - нижн. треуг. матрица
 
         Параметры
         ----------
-        B: матрица объекты-б.ф.
-        y: вектор ответов на объектах
+        V: матрица B.T @ B
+        c: вектор B.T @ y
 
 
         Выход
         ----------
+        коэфф-ты при б.ф. в модели
         """
         # V @ a = (L @ L^T) @ a = L @ (L^T @ a) = L @ b = c
-        # Где: b = L^T @ a
-
-        V = B.T @ B
-        c = B.T @ y
+        # b = L^T @ a
 
         # проверка на симметричность матрицы V
         if not np.allclose(V, V.T):
@@ -368,9 +419,12 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
         # сдвигаем СЗ на половину машинной точности float32
         ### хотя тип матрицы float64, но такой добавки не хватает
+        ### TODO: всё равно была проблема. мб дело не в этом, а мб и потому что не хватило
         half_eps = np.finfo(np.float32).eps / 2
-        V += half_eps * np.eye(V.shape[0])
+        ### TODO: добавлять диагональную матрицу
+        V += half_eps
 
+        # проверка на положительную определённость
         if not np.all(LA.eigvalsh(V) > 0):
             raise LA.LinAlgError('Matrix is not positive definite!')
         
@@ -402,25 +456,24 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
             self.value = value
 
         def __repr__(self):
-            ### TODO переопределить __class__
-            #return f'{self.__class__}: value={self.value}'
+            ### TODO во всех классах переопределить __class__:
+            ### return f'{self.__class__} value={self.value}'
             return f'<ConstantFunc> value={self.value}'
 
-        def calculate_func(self, X):
+        def calculate(self, X=None):
             '''
             Ф-ция, вычисляющая константную ф-цию.
 
             Параметры
             ----------
-            X: матрица объектов
+            X: матрица объектов (не используется)
             '''
-            #const = self.const * np.ones(X.shape[0])
             return self.value
 
     
     class BaseFunc():
         """
-        Класс-родитель для всех ф-ций, использующихся в качестве множителей в б.ф.
+        Класс-родитель для ф-ций, использующихся в качестве множителей в б.ф.
 
         Атрибуты
         ----------
@@ -430,13 +483,10 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         """
 
         ### TODO
-        ### 1. Подумать, что общего, кроме (s, v, t), можно найти у этих и мб будущих функций.
+        ### 1. Подумать, что общего, кроме (s, v, t), можно найти у этих и мб будущих функций?
         ###    Вспомнить статьи, которые читали. Мб там использовались какие-то ещё ф-ции?
         ###    Если да, то что у них общего с нашими?
-        ###    
         ### 2. Подумать, какие ещё методы и атрибуты могли бы пригодиться?
-        ### Ваши идеи:
-        ### ...
 
         def __init__(self, s, v, t):
             self.s = s
@@ -444,7 +494,6 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
             self.t = t
 
         def __repr__(self):
-            #return f'{self.__class__}: s={self.s}, v={self.v}, t={self.t:.3f}'
             return f'<BaseFunc> s={self.s}, v={self.v}, t={self.t:.3f}'
 
 
@@ -466,7 +515,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         def __repr__(self):
             return f'<IndicatorFunc> s={self.s}, v={self.v}, t={self.t:.3f}'
 
-        def calculate_func(self, X):
+        def calculate(self, X):
             '''
             Ф-ция, вычисляющая индикаторную ф-цию.
 
@@ -496,7 +545,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         def __repr__(self):
             return f'<LinearFunc> s={self.s}, v={self.v}, t={self.t:.3f}'
 
-        def calculate_func(self, X):
+        def calculate(self, X):
             '''
             Ф-ция, вычисляющая линейную ф-цию.
 
@@ -510,7 +559,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
     class ReluFunc(BaseFunc):
         """
-        Класс, реализующий положительную срезку (усечённая степенная сплайновая ф-ция).
+        Класс, реализующий положительную срезку (она же ReLU).
             f(x) = [s * (x[v] - t)]_+
 
         Атрибуты
@@ -526,7 +575,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         def __repr__(self):
             return f'<ReluFunc> s={self.s}, v={self.v}, t={self.t:.3f}'
 
-        def calculate_func(self, X):
+        def calculate(self, X):
             '''
             Ф-ция, вычисляющая положительную срезку.
 
@@ -535,8 +584,42 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
             X: матрица объектов
             '''
             linear = self.s * (X[:, self.v] - self.t)
-            hinge = np.where(linear > 0, linear, 0)
-            return hinge
+            relu = np.maximum(linear, 0)
+            return relu
+        
+
+    class PowReluFunc(BaseFunc):
+        """
+        Класс, реализующий степенную положительную срезку.
+            f(x) = [s * (x[v] - t)]^q_+
+
+        Атрибуты
+        ----------
+        s: знак
+        v: координата
+        t: порог
+        q: степень
+        """
+
+        def __init__(self, s, v, t, q):
+            super().__init__(s, v, t)
+            self.q = q
+
+        def __repr__(self):
+            return f'<PowReluFunc> s={self.s}, v={self.v}, t={self.t:.3f}, q={self.q}'
+
+        def calculate(self, X):
+            '''
+            Ф-ция, вычисляющая степенную положительную срезку.
+
+            Параметры
+            ----------
+            X: матрица объектов
+            '''
+            linear = self.s * (X[:, self.v] - self.t)
+            relu = np.maximum(linear, 0)
+            pow_relu = relu ** self.q
+            return pow_relu
 
 
     class CubicFunc(BaseFunc):
@@ -559,12 +642,10 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
             self.t_plus = t_plus
 
         def __repr__(self):
-            #return (f'{self.__class__}: s={self.s}, v={self.v}, t={self.t:.3f},'
-            #        f't_minus={self.t_minus:.3f}, t_plus={self.t_plus:.3f}')
             return (f'<CubicFunc> s={self.s}, v={self.v}, t={self.t:.3f},'
                     f't_minus={self.t_minus:.3f}, t_plus={self.t_plus:.3f}')
 
-        def calculate_func(self, X):
+        def calculate(self, X):
             '''
             Ф-ция, вычисляющая кубический усечённый сплайн.
 
@@ -572,157 +653,137 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
             ----------
             X: матрица объектов
             '''
-
             # точки, в которых X[v] удовлетворяет условиям:
             # X[v] <= t_minus:
-            less_than_t_minus = X[:, self.v] <= self.t_minus
+            mask_less = X[:, self.v] <= self.t_minus
             # t_minus < X[v] < t_plus:
-            between_t_plus_t_minus = self.t_minus < X[:, self.v] < self.t_plus
-            # t_plus <= X[v]:
-            greater_than_t_plus = (X[:, self.v] >= self.t_plus)
+            mask_between = self.t_minus < X[:, self.v] < self.t_plus
+            # X[v] >= t_plus:
+            mask_greater = X[:, self.v] >= self.t_plus
 
             # знак положительный
             if self.s > 0:
-                p_plus = (2 * self.t_plus + self.t_minus - 3 * self.t) / ((self.t_plus - self.t_minus) ** 2)
-                r_plus = (2 * self.t - self.t_plus - self.t_minus) / ((self.t_plus - self.t_minus) ** 3)
+                p_plus = (2*self.t_plus + self.t_minus - 3*self.t) / (self.t_plus - self.t_minus) ** 2
+                r_plus = (2*self.t - self.t_plus - self.t_minus) / (self.t_plus - self.t_minus) ** 3
 
-                return greater_than_t_plus * (X[:, self.v] - self.t) + \
-                       between_t_plus_t_minus * (p_plus * ((X[:, self.v] - self.t_minus) ** 2) +
-                                                 r_plus * ((X[:, self.v] - self.t_minus) ** 3))
-                
+                return mask_greater * (X[:, self.v] - self.t) + \
+                       mask_between * (p_plus * (X[:, self.v] - self.t_minus) ** 2 +
+                                       r_plus * (X[:, self.v] - self.t_minus) ** 3)
+            
             # знак отрицательный
-            p_minus = (3 * self.t - 2 * self.t_minus - self.t_plus) / ((self.t_minus - self.t_plus) ** 2)
-            r_minus = (self.t_minus + self.t_plus - 2 * self.t) / ((self.t_minus - self.t_plus) ** 3)
+            p_minus = (3*self.t - 2*self.t_minus - self.t_plus) / (self.t_minus - self.t_plus) ** 2
+            r_minus = (self.t_minus + self.t_plus - 2*self.t) / (self.t_minus - self.t_plus) ** 3
 
-            return less_than_t_minus * (self.t - X[:, self.v]) + \
-                   between_t_plus_t_minus * (p_minus * ((X[:, self.v] - self.t_plus) ** 2) +
-                                             r_minus * ((X[:, self.v] - self.t_plus) ** 3))
+            return mask_less * (self.t - X[:, self.v]) + \
+                   mask_between * (p_minus * (X[:, self.v] - self.t_plus) ** 2 +
+                                   r_minus * (X[:, self.v] - self.t_plus) ** 3)
 
 
     def knot_optimization(self, X, y, terms, new_basis, sorted_features, splines_type='default', **kwargs):
         """
-        Ф-ция находит лучший узел для рассматриваемой пары hinge функций.
+        Ф-ция находит лучший узел при фиксированных б.ф. B_m и координате v.
 
         Параметры
         ----------
-        X : Обучающая выборка
-        y : Отлклики
-        terms : список всех б.ф. (те, которые подбираем, сюда не входят)
-        new_basis : (term_num, term, v), v - координата, которую пытаемся добавить в б.ф. term
-        sorted_features : список координат, которые перебираем (отсортированы по возрастанию)
+        X : обучающая выборка
+        y : отлклики
+        terms : список уже созданных б.ф.
+        new_basis : (term_num, term, v) - фиксированные б.ф. и координата v
+        sorted_features : отсортированный по возрастанию список перебираемых координат
+        splines_type : ?
         ### Не знаю зачем нам нужно передавать sorted_features, если мы и так передаём X?
+        ### Мб чтобы не сортировать лишний раз?
 
 
         Выход
         ----------
-        (best_threshold, lof) : лучший порог и LOF на нём
+        (threshold, lof) : лучший порог и значение LOF на нём
         """
-
         data_count, data_dim = X.shape
-        term_num, testing_term, v = new_basis
-
+        term_num, term, v = new_basis
         B = self.b_calculation(X, terms)
-        B = np.hstack([B, np.empty((data_count, 2))])
+        # B_extnd - расширенная матрица B, не явл-ся матрицей объекты-б.ф.,
+        #  т.к. в последних двух столбцах используются не б.ф.
+        B_extnd = np.hstack([B, np.empty((data_count, 2))])
 
 
-        # прореживание мн-ва перебираемых порогов
-        basis_nonzero_counter = data_count - np.isclose(B[:, term_num], 0.).sum()
-
-        ### TODO: Проверка на корректность атрибутов с исключениями.
-        # L(alpha) - шаг в переборе порогов
-        if self.minspan == -1:
-            thres_step = -np.log2(-1 / (data_dim * basis_nonzero_counter) *
-                              np.log(1 - self.minspan_alpha)) / 2.5
-        else:
-            thres_step = self.endspan
-
-        # Le(alpha) - отсуп от граничных порогов
-        if self.endspan == -1:
-            thres_margin = 3 - np.log2(self.endspan_alpha / data_dim)
-        else:
-            thres_margin = self.endspan
-
-        sorted_features = sorted_features[thres_margin:-thres_margin:thres_step]
-
-        # остались ли пороги после прореживания
-        if sorted_features.size == 0:
+        # Прореживание мн-ва перебираемых порогов.
+        minspan, endspan = self.l_and_le_calculation(B[:, term_num], data_dim)
+        thin_sorted_features = sorted_features[endspan:-endspan:minspan]
+        if thin_sorted_features.size == 0:
             return (None, float('inf'))
         
 
-        B[:, -2] = B[:, term_num] * X[:, v] # B_m(x) * x[v]
-        thres = sorted_features[-1] ## Проверяем максимальный порог
-        ###  По идее сюда можно классы вставить
-        B[:, -1] = B[:, term_num] * np.maximum(X[:, v] - thres, 0) # B_m(x) * (x[v] - t)_+
-        b_mean = B.mean(axis=1)
-        y_mean = y.mean()
+        # заполняем последние 2 столбца матрицы B_extnd 2-мя последними слагаемыми из g' (они не б.ф.)
+        thres = thin_sorted_features[-1]
+        B_extnd[:, -2] = B_extnd[:, term_num] * X[:, v]                        # B_m(x) * x[v]
+        B_extnd[:, -1] = B_extnd[:, term_num] * np.maximum(X[:, v] - thres, 0) # B_m(x) * (x[v] - t)_+
+        b_extnd_mean = np.mean(B_extnd, axis=0)
+        y_mean = np.mean(y)
 
-        # B @ a = y ---> (B^T @ B) @ a = (B^T @ y)
-        ### TODO: Проверить целесообразность нормализации только одного слагаемого.
-        ### Попробовать без нормализации и с полной нормализацией.
-        c = B.T @ (y - y_mean)
-        V = (B - b_mean).T @ B
+        # B @ a = y ---> (B^T @ B) @ a = (B^T @ y) = V @ a = c
+        ### TODO: Попробовать без нормализации и с полной нормализацией.
+        V_extnd = (B_extnd - b_extnd_mean).T @ B_extnd
+        c_extnd = (y - y_mean).T @ B_extnd
 
-        tmp_ind = (X[:, v] >= thres).nonzero()
-        s_prev = (B[tmp_ind, term_num] * (X[tmp_ind, v] - thres)).sum() # s(u) в статье Фридмана
-        
-        ### Где-то в одном месте считать матрицу V
-        coeffs = self.calculate_coeffs(B, y)
-        lof = self.lof(B, y, coeffs)
+        s_greater_ind = np.nonzero(X[:, v] >= thres)
+        s_prev = np.sum(B_extnd[s_greater_ind, term_num] * (X[s_greater_ind, v] - thres)) # s(u)
+
+        coeffs_extnd = self.coeffs_calculation(V_extnd, c_extnd)
+        best_lof = self.lof(B_extnd, y, coeffs_extnd)
         best_threshold = thres
-        ### ???надо бы в gcv добавить возможнось считать gcv по матрицам
-        ### вычислять коэффы по матрице, а потом заново считать матрицу в gcv
-        ### много времени тратит
 
 
-        # цикл по остальным порогам
-        prev_thres = thres
-        for thres in sorted_features[-2::-1]:
-            if self.term_calculation(thres, testing_term) == 0:
+        # цикл по порогам                               (t <= u)
+        thres_prev = thres                         # thres_prev -> u
+        for thres in thin_sorted_features[-2::-1]: # thres -> t
+            if self.term_calculation(thres, term) == 0: ###?
                 continue
-            tmp_ind = (thres <= X[:, v] < prev_thres).nonzero()
-            other_elems_ind = (X[:, v] >= prev_thres).nonzero()
+            between_ind = np.nonzero(thres < X[:, v] < thres_prev)
+            greater_ind = np.nonzero(X[:, v] >= thres_prev)
+            s_greater_ind = np.nonzero(X[:, v] >= thres)
+            s = np.sum(B_extnd[s_greater_ind, term_num] * (X[s_greater_ind, v] - thres)) # s(t)
+
             # c[M+1]
-            c[-1] += ((y[tmp_ind] - y_mean) * B[tmp_ind, term_num] *
-                       (X[tmp_ind, v] - thres)).sum() + \
-                      (prev_thres - thres) * ((y[other_elems_ind] - y_mean) *
-                                               B[other_elems_ind, term_num]).sum()
+            c_extnd[-1] += np.sum((y[between_ind] - y_mean) * B_extnd[between_ind, term_num] *
+                                  (X[between_ind, v] - thres)) + \
+                           (thres_prev - thres) * \
+                           np.sum((y[greater_ind] - y_mean) *
+                                  B_extnd[greater_ind, term_num])
 
-            # V[i,M+1], i = 1..M => V[M+1,i], i = 1..M
-            col = (((B[tmp_ind, :-1] - b_mean[:-1]) * 
-                        B[tmp_ind, term_num] * (X[tmp_ind, v] - thres))).sum(axis=0) + \
-                        (((B[other_elems_ind, :-1] - b_mean[:-1]) *
-                        B[other_elems_ind, term_num] * (prev_thres - thres))).sum(axis=0)
-
-            V[:-1, -1] += col
-            V[-1, :-1] = V[:-1, -1] # в силу симметричночсти
+            # V[i,M+1], i = 1..M => {симметричность матрицы V} => V[M+1,i], i = 1..M
+            V_extnd[:-1, -1] += np.sum((B_extnd[between_ind, :-1] - b_extnd_mean[:-1]) * 
+                                       B_extnd[between_ind, term_num][:, np.newaxis] *
+                                       (X[between_ind, v] - thres)[:, np.newaxis], axis=0) + \
+                                (thres_prev - thres) * \
+                                np.sum((B_extnd[greater_ind, :-1] - b_extnd_mean[:-1]) *
+                                       B_extnd[greater_ind, term_num][:, np.newaxis], axis=0)
+            V_extnd[-1, :-1] = V_extnd[:-1, -1]
 
             # V[M+1,M+1]
-            new_ind = (X[:, v] >= thres).nonzero()
-            s_new = (B[new_ind, term_num] * (X[new_ind, v] - thres)).sum()
+            V_extnd[-1, -1] += np.sum((B_extnd[between_ind, term_num] * (X[between_ind, v] - thres)) ** 2) + \
+                               (thres_prev - thres) * \
+                               np.sum(B_extnd[greater_ind, term_num] ** 2 *
+                                      (2 * X[greater_ind, v] - thres - thres_prev)) + \
+                               (s_prev ** 2 - s ** 2) / data_count
 
-            V[-1, -1] += ((B[tmp_ind, term_num] * (X[tmp_ind, v] - thres))**2).sum() + \
-                         ((prev_thres - thres) * B[other_elems_ind, term_num]**2 *
-                          (2 * X[other_elems_ind, v] - thres - prev_thres)).sum() + \
-                         (s_prev**2 - s_new**2) / data_count
+            # находим коэфф-ты, отвечающие ф-ции g' и отличающиеся от оптимальных для соотв-го набора б.ф.
+            # при этом зн-я lof* моделей g и g' (со своими наборами коэфф-тов) совпадают =>
+            # => совпадают оптимальные пороги t*
+            coeffs_extnd = self.coeffs_calculation(V_extnd, c_extnd)
+            lof = self.lof(B_extnd, y, coeffs_extnd)
 
-            s_prev = s_new
-            ### Внутрь надо передавать пересчитанную матрицу V
-            ### Так а по итогу какие б.ф. мы оставляем: старые или новые?
-            ### Если старые, то эквивалентны ли предсказания g и g'?
-            ### А хотя мы g' используем просто для того чтобы считать lof
-            coeffs = self.calculate_coeffs(B, y)
-            try_lof = self.lof(B, y, coeffs)
-            best_threshold = thres
-
-            ### выбираем лучший порог
-            if try_lof < lof:
+            if lof < best_lof:
+                best_lof = lof
                 best_threshold = thres
-                lof = try_lof
-        return (best_threshold, lof)
+
+            s_prev = s
+            thres_prev = thres
+
+        return (best_threshold, best_lof)
 
 
-    ### Дополнительные ф-ции, которые использовались в py-earth. Следовать этому вообще не обязательно,
-    ### просто для представления структуры отдельных блоков.
+    ### Дополнительные ф-ции, которые использовались в py-earth.
     ### def __eq__(self, other):
     ### def __ne__(self, other):
     ### def _pull_forward_args(self, **kwargs): "Pull named arguments relevant to the forward pass"
@@ -789,10 +850,10 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
         if self.enable_pruning:
             self.pruning_pass(X, y,
-                            sample_weight,
-                            output_weight,
-                            missing)
-        
+                              sample_weight,
+                              output_weight,
+                              missing)
+            
         return self
         
         
@@ -843,7 +904,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
         ### Пока реализуем самый простой вариант MARS (алгоритм 2 из оригинальной статьи)
 
-
+        ### [...] - скобка Айверсона
         # Обозначения из оригинальной статьи:
         # g(x) - модель: 
         #   g(x) = a_1 * B_1(x) + ... + a_M * B_M(x)
@@ -919,7 +980,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
                         # находим оптимальные коэфф-ты, решая СЛАУ методом Холецкого,
                         #   считаем lof
                         B = self.b_calculation(X, term_list)
-                        coeffs = self.calculate_coeffs(B, y)
+                        coeffs = self.coeffs_calculation(B, y)
                         lof = self.lof(B, y, coeffs)
                         if lof < self.best_lof:
                             flag_improve_lof = True
@@ -928,7 +989,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
                             best_v = v
                             best_t = t
                             self.coeffs = coeffs
-
+        
 
             if not flag_improve_lof:
                 break
@@ -946,6 +1007,8 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
             self.term_list.append(term_with_plus)
             self.term_list.append(term_with_minus)
             term_count += 2 # M <- M + 2
+
+        return self
 
 
     def pruning_pass(
@@ -998,7 +1061,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
                 # находим оптимальные коэфф-ты, считаем lof без очередной б.ф.
                 B = self.b_calculation(X, K)
-                coeffs = self.calculate_coeffs(B, y)
+                coeffs = self.coeffs_calculation(B, y)
                 lof = self.lof(B, y, coeffs)
 
                 if lof < b:
@@ -1010,7 +1073,8 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
                     self.best_lof = lof
                     self.term_list = K
                     self.coeffs = coeffs
-
+        return self
+    
 
     def linear_fit(
             self, X, y=None,
@@ -1052,7 +1116,6 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
         
         missing : array-like, shape = [m, n], где m - кол-во объектов, n - кол-во признаков
-            ### (пока забиваем)
             ...
 
 
@@ -1155,7 +1218,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         ----------
         B: array of shape [m, nb_terms], где m - кол-во объектов, nb_terms - кол-во
         получившихся базисных функций.
-            Матрица, содержащая значения базисных функций, вычисленных во всех объектах.
+            Матрица, содержащая значения базисных функций, вычисленных на всех объектах.
         """
         B = self.b_calculation(X, self.term_list)
         return B
@@ -1198,7 +1261,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         """
         Описание модели в виде строки.
         """
-        pass
+        return self.term_list
 
 
     def summary_feature_importances(self, sort_by=None):
@@ -1225,5 +1288,4 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
 ### ==========================================Для всякого====================================================== 
 ### TODO: Подумать, мб знаете способы проще масштабировать код?
-### Ваши идеи:
-### ...
+### TODO: Проверка на корректность атрибутов с исключениями.
