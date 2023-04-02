@@ -156,15 +156,14 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         # Нами введённые параметры
         ### TODO добавить поддержку не только GCV.
         ### В частности - поддержку произвольной ф-ции. Для оптимизации использовать численные методы.
-        self.method = 'nelder-mead' # метод оптимизации
-        self.lof = self.gcv # LOF ф-ция
-        self.best_lof = float('inf') # лучшее полученное значение lof
+        self.method = 'nelder-mead'  # метод оптимизации
+        self.lof = self.gcv  # LOF ф-ция
+        self.best_lof = float('inf')  # зн-ие lof на обученных коэфф-ах
         # term_list = [B_1, ..., B_M] - список б.ф. (term)
-        # B_m = [mult_{m,1}, ..., mult_{m,K_m}] - список множителей (mult) б.ф. B_m
-        ### TODO мб сделать специальный класс для б.ф.?
+        # B = [mult_,1 , ... , mult_K] - список множителей (mult) б.ф. B
         self.term_list = self.TermListClass([[self.ConstantFunc(1.)], ])
-        self.coeffs = None # коэффициенты при б.ф.
-        self.B = None # матрица объекты-б.ф. чтобы не пересчитывать лишний раз
+        self.coeffs = None  # коэфф-ты при б.ф.
+        self.B = None  # матрица объекты-б.ф. (чтобы не пересчитывать лишний раз)
 
 
     ### Множества нужны для verbose, trace и т.д.
@@ -192,7 +191,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
     class TermListClass(list):
         """
         Класс, реализующий представление мн-ва б.ф. в виде списка б.ф.
-        б.ф. тоже представляется обёрткой над списком составляющих его множителей.
+        б.ф. также представляется обёрткой над списком составляющих его множителей.
         TODO дописать
         """
 
@@ -309,7 +308,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         return C_correct
     
 
-    def l_and_le_calculation(self, b, data_dim):
+    def minspan_endspan_calculation(self, b, data_dim):
         '''
         Ф-ция, вычисляющая L(alpha) и Le(alpha):
             L(alpha) задаёт шаг из порогов между соседними узлами
@@ -319,27 +318,16 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         Параметры
         ----------
         b: вектор - значения б.ф. B_m на объектах из обуч. выборки
-        data_dim: размерность объекта
-
-
-        Выход
-        ----------
-        (L(alpha), Le(alpha))
+        data_dim: размерность объектов
         '''
         term_nonzero_count = np.count_nonzero(b)
 
         if self.minspan == None:
-            minspan = -np.log2(-1 / (data_dim * term_nonzero_count) *
+            self.minspan = -np.log2(-1 / (data_dim * term_nonzero_count) *
                                np.log(1 - self.minspan_alpha)) / 2.5
-        else:
-            minspan = self.minspan
 
         if self.endspan == None:
-            endspan = 3 - np.log2(self.endspan_alpha / data_dim)
-        else:
-            endspan = self.endspan
-
-        return (minspan, endspan)
+            self.endspan = 3 - np.log2(self.endspan_alpha / data_dim)
         
 
     def gcv(self, B, y, coeffs):
@@ -681,14 +669,14 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
     def knot_optimization(self, X, y, terms, new_basis, sorted_features, splines_type='default', **kwargs):
         """
-        Ф-ция находит лучший узел при фиксированных б.ф. B_m и координате v.
+        Ф-ция находит лучший узел при фиксированной б.ф. B_m и координате v.
 
         Параметры
         ----------
         X : обучающая выборка
         y : отлклики
         terms : список уже созданных б.ф.
-        new_basis : (term_num, term, v) - фиксированные б.ф. и координата v
+        new_basis : (term_num, term, v) - фиксированная б.ф. и координата v
         sorted_features : отсортированный по возрастанию список перебираемых координат
         splines_type : ?
         ### Не знаю зачем нам нужно передавать sorted_features, если мы и так передаём X?
@@ -697,27 +685,27 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
         Выход
         ----------
-        (threshold, lof) : лучший порог и значение LOF на нём
+        (best_thres, best_lof) : лучший порог и значение LOF на нём
         """
         data_count, data_dim = X.shape
         term_num, term, v = new_basis
         B = self.b_calculation(X, terms)
-        # B_extnd - расширенная матрица B, не явл-ся матрицей объекты-б.ф.,
+        # B_extnd - расширенная матрица B, она не явл-ся матрицей объекты-б.ф.,
         #  т.к. в последних двух столбцах используются не б.ф.
         B_extnd = np.hstack([B, np.empty((data_count, 2))])
 
 
         # Прореживание мн-ва перебираемых порогов.
-        minspan, endspan = self.l_and_le_calculation(B[:, term_num], data_dim)
-        thin_sorted_features = sorted_features[endspan:-endspan:minspan]
+        self.minspan_endspan_calculation(B[:, term_num], data_dim)
+        thin_sorted_features = sorted_features[self.endspan:-self.endspan:self.minspan]
         if thin_sorted_features.size == 0:
             return (None, float('inf'))
         
 
         # заполняем последние 2 столбца матрицы B_extnd 2-мя последними слагаемыми из g' (они не б.ф.)
         thres = thin_sorted_features[-1]
-        B_extnd[:, -2] = B_extnd[:, term_num] * X[:, v]                        # B_m(x) * x[v]
-        B_extnd[:, -1] = B_extnd[:, term_num] * np.maximum(X[:, v] - thres, 0) # B_m(x) * (x[v] - t)_+
+        B_extnd[:, -2] = B_extnd[:, term_num] * X[:, v]                         # B_m(x) * x[v]
+        B_extnd[:, -1] = B_extnd[:, term_num] * np.maximum(X[:, v] - thres, 0)  # B_m(x) * (x[v] - t)_+
         b_extnd_mean = np.mean(B_extnd, axis=0)
         y_mean = np.mean(y)
 
@@ -727,22 +715,22 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         c_extnd = (y - y_mean).T @ B_extnd
 
         s_greater_ind = np.nonzero(X[:, v] >= thres)
-        s_prev = np.sum(B_extnd[s_greater_ind, term_num] * (X[s_greater_ind, v] - thres)) # s(u)
+        s_prev = np.sum(B_extnd[s_greater_ind, term_num] * (X[s_greater_ind, v] - thres))  # s(u)
 
         coeffs_extnd = self.coeffs_calculation(V_extnd, c_extnd)
         best_lof = self.lof(B_extnd, y, coeffs_extnd)
-        best_threshold = thres
+        best_thres = thres
 
 
-        # цикл по порогам                               (t <= u)
-        thres_prev = thres                         # thres_prev -> u
-        for thres in thin_sorted_features[-2::-1]: # thres -> t
+        # цикл по порогам                             t <= u
+        thres_prev = thres                          # thres_prev -> u
+        for thres in thin_sorted_features[-2::-1]:  # thres -> t
             if self.term_calculation(thres, term) == 0: ###?
                 continue
             between_ind = np.nonzero(thres < X[:, v] < thres_prev)
             greater_ind = np.nonzero(X[:, v] >= thres_prev)
             s_greater_ind = np.nonzero(X[:, v] >= thres)
-            s = np.sum(B_extnd[s_greater_ind, term_num] * (X[s_greater_ind, v] - thres)) # s(t)
+            s = np.sum(B_extnd[s_greater_ind, term_num] * (X[s_greater_ind, v] - thres))  # s(t)
 
             # c[M+1]
             c_extnd[-1] += np.sum((y[between_ind] - y_mean) * B_extnd[between_ind, term_num] *
@@ -775,12 +763,12 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
             if lof < best_lof:
                 best_lof = lof
-                best_threshold = thres
+                best_thres = thres
 
             s_prev = s
             thres_prev = thres
 
-        return (best_threshold, best_lof)
+        return (best_thres, best_lof)
 
 
     ### Дополнительные ф-ции, которые использовались в py-earth.
@@ -902,41 +890,45 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         ### Что такое skip_scrub?
         """
 
-        ### Пока реализуем самый простой вариант MARS (алгоритм 2 из оригинальной статьи)
-
-        ### [...] - скобка Айверсона
         # Обозначения из оригинальной статьи:
-        # g(x) - модель: 
+        # g(x) - модель:
         #   g(x) = a_1 * B_1(x) + ... + a_M * B_M(x)
-        #     M - итоговое кол-во базисных ф-ций (б.ф.)
-        # B_m - m-ая б.ф. ---> term
-        #   B_m(x) = [s_1 * (x[v_1] - t_1)]_+ * ... * [s_Km * (x[v_Km] - t_Km)]_+
-        #   B_1 = 1 (константная б.ф.)
-        #   множители в б.ф. ---> mult
-        #     [...]_+ - положительная срезка
-        #     Km - общее кол-во множителей в m-ой б.ф.
-        #     s_j - знак j-ого множителя
-        #     v_j - координата x j-ого множителя
-        #     t_j - порог j-ого множителя
-        # a_i - коэф-т при i-ой б.ф.
-        # N - кол-во объектов ---> data_count
-        # x_k = (x_k,1 , ... , x_k,d)
-        #   d - размерность ---> data_dim
+        #     M - кол-во б.ф. ---> term_count
+        #     B - б.ф. ---> term
+        #     B(x) = mult_1 * ... * mult_K
+        #     B_1 = const_func
+        #       Виды множителей в б.ф. ---> mult:
+        #       1) [s_1 * (x[v_1] - t_1)]_+     - положительная срезка
+        #       2) [(s_1 * (x[v_1] - t_1))^q]_+ - степенная положительная срезка
+        #       3) [s_1 * (x[v_1] - t_1)]       - индикаторная ф-ция
+        #       4) s_1 * (x[v_1] - t_1)         - линейная ф-ция
+        #       5) const_func                   - константная ф-ция
+        #       6) cubic_func                   - кубический сплайн с 1ой непр-ой произв-ой
+        #         [...]   - скобка Айверсона
+        #         [...]_+ - положительная срезка
+        #         K       - кол-во множителей в б.ф.
+        #         s_j     - знак j-ого множителя
+        #         v_j     - координата x j-ого множителя
+        #         t_j     - порог j-ого множителя
+        #   a_i - коэф-т при i-ой б.ф.
+        #   N   - кол-во объектов ---> data_count
+        #   x = (x_1 , ... , x_d)
+        #     d - размерность ---> data_dim
 
         data_count, data_dim = X.shape
-        term_count = 2 # M <- 2
+        term_count = 2  # M <- 2
+
+        final_coeffs = None
+        final_best_lof = float('inf')
 
         # создаём б.ф. пока не достигнем макс. кол-ва
         while term_count <= self.max_terms:
-            
-            # Может произойти ситуация, когда добавление очередной пары б.ф. не приводит к улучшению.
-            # В таком случае мы досрочно завершаем проход вперёд.
-            flag_improve_lof = False
+            best_lof = float('inf')  # lof* <- +inf
 
             # перебираем уже созданные б.ф.
             for term in self.term_list:
                 # формируем мн-во уже использованных (невалидных) координат
-                ### TODO: можно хранить для каждой б.ф. мн-во неиспользованных координат
+                ### TODO: можно хранить для каждой б.ф. мн-во неиспользованных координат, будет ли ускорение
                 not_valid_coords = []
                 # если это не константная б.ф. B_1
                 ### TODO сделать соответствующую ф-цию добавления в классе б.ф.
@@ -944,8 +936,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
                     if type(mult) != self.ConstantFunc:
                         not_valid_coords.append(mult.v)
                 # формируем мн-во ещё не занятых (валидных) координат
-                valid_coords = [coord for coord in range(0, data_dim)
-                                if coord not in not_valid_coords]
+                valid_coords = [coord for coord in range(0, data_dim) if coord not in not_valid_coords]
 
                 # перебираем все ещё не занятые координаты
                 for v in valid_coords:
@@ -953,7 +944,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
                     ### t_plus и t_minus предлагается выбрать как среднее между 
                     ###  t и соседними узлами справа и слева
 
-                    # перебираем обучающие данные (они же пороги)
+                    # перебираем пороги t (обучающие данные)
                     for ind in range(data_count):
                         # учитываем только нетривиальные пороги
                         x = X[ind][np.newaxis, :]
@@ -962,51 +953,51 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
                         t = x[0, v]
 
                         # создаём новые множители
-                        mult_with_plus = self.ReluFunc(-1, v, t)
-                        mult_with_minus = self.ReluFunc(1, v, t)
+                        mult_with_plus  = self.ReluFunc(-1, v, t)
+                        mult_with_minus = self.ReluFunc(+1, v, t)
 
                         # создаём потенциальные б.ф.
-                        ### мб нужно deepcopy
-                        term_with_plus = list(term)
+                        ### мб нужно copy.deepcopy
+                        term_with_plus  = list(term)
                         term_with_minus = list(term)
-                        term_with_plus.append(mult_with_plus)   # B_m * [+(x[v] - t)]_+
-                        term_with_minus.append(mult_with_minus) # B_m * [-(x[v] - t)]_+
+                        term_with_plus.append(mult_with_plus)    # B'_M  = B_m * mult_+
+                        term_with_minus.append(mult_with_minus)  # B'_{M+1} = B_m * mult_-
 
                         # создаём список с новыми б.ф.
                         term_list = list(self.term_list)
                         term_list.append(term_with_plus)
                         term_list.append(term_with_minus)
 
-                        # находим оптимальные коэфф-ты, решая СЛАУ методом Холецкого,
-                        #   считаем lof
+                        # находим оптимальные коэфф-ты МНК методом Холецкого, считаем lof
                         B = self.b_calculation(X, term_list)
-                        coeffs = self.coeffs_calculation(B, y)
+                        V, c = 
+                        coeffs = self.coeffs_calculation(V, c)
                         lof = self.lof(B, y, coeffs)
-                        if lof < self.best_lof:
-                            flag_improve_lof = True
-                            self.best_lof = lof
+                        if lof < best_lof:
+                            best_lof  = lof
                             best_term = term
                             best_v = v
                             best_t = t
-                            self.coeffs = coeffs
+                            final_coeffs = coeffs
+                            final_lof = lof
         
 
-            if not flag_improve_lof:
-                break
-
-            # создаём оптимальные множители, если было улучшение lof
-            mult_with_plus = self.ReluFunc(-1, best_v, best_t)
-            mult_with_minus = self.ReluFunc(1, best_v, best_t)
+            # создаём лучшие множители
+            mult_with_plus  = self.ReluFunc(-1, best_v, best_t)
+            mult_with_minus = self.ReluFunc(+1, best_v, best_t)
 
             # создаём новые б.ф.
             ### мб нужно copy.deepcopy
-            term_with_plus = list(best_term)
+            term_with_plus  = list(best_term)
             term_with_minus = list(best_term)
-            term_with_plus.append(mult_with_plus)   # B_M
-            term_with_minus.append(mult_with_minus) # B_{M+1}
+            term_with_plus.append(mult_with_plus)    # B_M
+            term_with_minus.append(mult_with_minus)  # B_{M+1}
             self.term_list.append(term_with_plus)
             self.term_list.append(term_with_minus)
-            term_count += 2 # M <- M + 2
+            term_count += 2  # M <- M + 2
+
+        self.coeffs = final_coeffs
+        self.lof = final_lof
 
         return self
 
@@ -1279,13 +1270,21 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
     def get_penalty(self):
         """
-        Возвращает параметр сглаживания d из C_correct(M) = C(M) + d*M.
+        Возвращает параметр сглаживания d
+            C_correct(M) = C(M) + d*M.
         """
         return self.penalty
+    
 
-
+    def get_minspan_endspan(self):
+        """
+        Возвращает L(alpha) и Le(alpha):
+            L(alpha) задаёт шаг из порогов между соседними узлами
+            Le(alpha) задаёт отступ из порогов для граничных узлов
+        Смысл - сглаживание, скользящее окно.
+        """
+        return (self.minspan, self.endspan)
 
 
 ### ==========================================Для всякого====================================================== 
-### TODO: Подумать, мб знаете способы проще масштабировать код?
 ### TODO: Проверка на корректность атрибутов с исключениями.
