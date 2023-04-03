@@ -158,12 +158,12 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         ### В частности - поддержку произвольной ф-ции. Для оптимизации использовать численные методы.
         self.method = 'nelder-mead'  # метод оптимизации
         self.lof = self.gcv  # LOF ф-ция
-        self.best_lof = float('inf')  # зн-ие lof на обученных коэфф-ах
-        # term_list = [B_1, ..., B_M] - список б.ф. (term)
+        self.lof_value = float('inf')  # зн-ие lof на обученных коэфф-ах
+        # term_list = [B_1, ..., B_M]  - список б.ф. (term)
         # B = [mult_,1 , ... , mult_K] - список множителей (mult) б.ф. B
         self.term_list = self.TermListClass([[self.ConstantFunc(1.)], ])
-        self.coeffs = None  # коэфф-ты при б.ф.
-        self.B = None  # матрица объекты-б.ф. (чтобы не пересчитывать лишний раз)
+        self.coeffs = np.array([1.])  # коэфф-ты при б.ф.
+        self.B = None  # матрица обучающие объекты-б.ф. (чтобы не пересчитывать лишний раз)
 
 
     ### Множества нужны для verbose, trace и т.д.
@@ -280,7 +280,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         return B
 
 
-    def c_calculation(self, B):
+    def c_calculation(self, V, B):
         '''
         Ф-ция, вычисляющая поправочный коэффициент C_correct(M).
             C(M) = trace(B @ (B^T @ B)^(-1) @ B^T) + 1
@@ -291,6 +291,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         Параметры
         ----------
         B: матрица объекты-б.ф.
+        V: скорректированная матрица B.T @ B
 
 
         Выход
@@ -298,11 +299,6 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         поправочный коэффициент C_correct(M)
         '''
         term_count = B.shape[1]
-
-        # сдвигаем СЗ матрицы V на половину машинной точности float32
-        V = B.T @ B
-        V += np.finfo(np.float32).eps / 2
-
         C = np.trace(B @ LA.inv(V) @ B.T) + 1
         C_correct = C + self.penalty * term_count
         return C_correct
@@ -330,7 +326,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
             self.endspan = 3 - np.log2(self.endspan_alpha / data_dim)
         
 
-    def gcv(self, B, y, coeffs):
+    def gcv(self, V, B, y, coeffs):
         '''
         ### TODO: реализовать в виде класса
         Generalized Cross-Validation criterion (GCV):
@@ -343,6 +339,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         Параметры
         ----------
         B: матрица объекты-б.ф.
+        V: скорректированная мат. B.T @ B
         y: вектор ответов на объектах
         coeffs: вектор коэфф-ов
 
@@ -354,7 +351,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         data_count = y.size
         y_pred = self.g_calculation(B, coeffs)
         mse = np.mean((y - y_pred) ** 2)
-        c = self.c_calculation(B)
+        c = self.c_calculation(V, B)
         mse_correct = mse / (1 - c / data_count) ** 2
         return mse_correct
 
@@ -400,21 +397,6 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         """
         # V @ a = (L @ L^T) @ a = L @ (L^T @ a) = L @ b = c
         # b = L^T @ a
-
-        # проверка на симметричность матрицы V
-        if not np.allclose(V, V.T):
-            raise LA.LinAlgError('Asymmetric matrix!')
-
-        # сдвигаем СЗ на половину машинной точности float32
-        ### хотя тип матрицы float64, но такой добавки не хватает
-        ### TODO: всё равно была проблема. мб дело не в этом, а мб и потому что не хватило
-        half_eps = np.finfo(np.float32).eps / 2
-        ### TODO: добавлять диагональную матрицу
-        V += half_eps
-
-        # проверка на положительную определённость
-        if not np.all(LA.eigvalsh(V) > 0):
-            raise LA.LinAlgError('Matrix is not positive definite!')
         
         L = LA.cholesky(V)
 
@@ -426,6 +408,35 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
         ### TODO: Мб есть оптимизатор, в котором можно явно выбрать метод Холецкого?
         return a
+    
+
+    def symmetric_positive_matrix_correct(self, V):
+        """
+        Ф-ция, корректирующая симметричную, положительно определённую матрицу,
+        добавляя к ней диагональную матрицу, заполненную половиной машинной точности
+        Далее происходит проверка достижения желаемого рез-та.
+        
+        Параметры
+        ----------
+        V: потенциально симм. полож. опред. мат.
+
+
+        Выход
+        ----------
+        скорректированная симм. положит. опред. мат. V
+        """
+        eps = 100 * np.finfo(np.float32).eps
+        V += np.eye(V.shape[0]) * eps
+
+        # проверка на симметричность
+        if not np.array_equal(V, V.T):
+            raise LA.LinAlgError('Asymmetric matrix!')
+
+        # проверка на положительную определённость
+        if not np.all(LA.eigvalsh(V) > 0):
+            raise LA.LinAlgError('Matrix is not positive definite!')
+
+        return V
 
 
     class ConstantFunc():
@@ -918,7 +929,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         data_count, data_dim = X.shape
         term_count = 2  # M <- 2
 
-        final_coeffs = None
+        final_coeffs = np.array([1.])
         final_lof = float('inf')
 
         # создаём б.ф. пока не достигнем макс. кол-ва
@@ -970,10 +981,10 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
                         # находим оптимальные коэфф-ты МНК методом Холецкого, считаем lof
                         B = self.b_calculation(X, term_list)
-                        V = B.T @ B
+                        V = self.symmetric_positive_matrix_correct(B.T @ B)
                         c = B.T @ y
                         coeffs = self.coeffs_calculation(V, c)
-                        lof = self.lof(B, y, coeffs)
+                        lof = self.lof(V, B, y, coeffs)
                         if lof < best_lof:
                             best_lof  = lof
                             best_term = term
@@ -982,7 +993,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
                             final_coeffs = coeffs
                             final_lof = lof
         
-
+            
             # создаём лучшие множители
             mult_with_plus  = self.ReluFunc(-1, best_v, best_t)
             mult_with_minus = self.ReluFunc(+1, best_v, best_t)
@@ -1000,7 +1011,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
         # зн-е lof и набор коэфф-ов после прохода вперёд
         self.coeffs = final_coeffs
-        self.lof = final_lof
+        self.lof_value = final_lof
 
         return self
 
@@ -1290,4 +1301,5 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
 
 ### ==========================================Для всякого====================================================== 
-### TODO: Проверка на корректность атрибутов с исключениями.
+### TODO Проверка на корректность атрибутов с исключениями.
+### TODO Нужен ли досрочный выход?
