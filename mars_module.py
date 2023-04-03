@@ -919,16 +919,16 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         term_count = 2  # M <- 2
 
         final_coeffs = None
-        final_best_lof = float('inf')
+        final_lof = float('inf')
 
         # создаём б.ф. пока не достигнем макс. кол-ва
         while term_count <= self.max_terms:
             best_lof = float('inf')  # lof* <- +inf
 
             # перебираем уже созданные б.ф.
-            for term in self.term_list:
+            for term_num, term in enumerate(self.term_list):
                 # формируем мн-во уже использованных (невалидных) координат
-                ### TODO: можно хранить для каждой б.ф. мн-во неиспользованных координат, будет ли ускорение
+                ### TODO: можно хранить для каждой б.ф. мн-во неиспользованных координат, будет ли ускорение?
                 not_valid_coords = []
                 # если это не константная б.ф. B_1
                 ### TODO сделать соответствующую ф-цию добавления в классе б.ф.
@@ -956,21 +956,22 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
                         mult_with_plus  = self.ReluFunc(-1, v, t)
                         mult_with_minus = self.ReluFunc(+1, v, t)
 
-                        # создаём потенциальные б.ф.
+                        # создаём новые б.ф.
                         ### мб нужно copy.deepcopy
                         term_with_plus  = list(term)
                         term_with_minus = list(term)
                         term_with_plus.append(mult_with_plus)    # B'_M  = B_m * mult_+
                         term_with_minus.append(mult_with_minus)  # B'_{M+1} = B_m * mult_-
 
-                        # создаём список с новыми б.ф.
+                        # добавляем в список б.ф. новые б.ф.
                         term_list = list(self.term_list)
                         term_list.append(term_with_plus)
                         term_list.append(term_with_minus)
 
                         # находим оптимальные коэфф-ты МНК методом Холецкого, считаем lof
                         B = self.b_calculation(X, term_list)
-                        V, c = 
+                        V = B.T @ B
+                        c = B.T @ y
                         coeffs = self.coeffs_calculation(V, c)
                         lof = self.lof(B, y, coeffs)
                         if lof < best_lof:
@@ -986,16 +987,18 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
             mult_with_plus  = self.ReluFunc(-1, best_v, best_t)
             mult_with_minus = self.ReluFunc(+1, best_v, best_t)
 
-            # создаём новые б.ф.
-            ### мб нужно copy.deepcopy
+            # создаём лучшие б.ф.
             term_with_plus  = list(best_term)
             term_with_minus = list(best_term)
             term_with_plus.append(mult_with_plus)    # B_M
             term_with_minus.append(mult_with_minus)  # B_{M+1}
+
+            # добавляем в список б.ф. лучшие б.ф.
             self.term_list.append(term_with_plus)
             self.term_list.append(term_with_minus)
             term_count += 2  # M <- M + 2
 
+        # зн-е lof и набор коэфф-ов после прохода вперёд
         self.coeffs = final_coeffs
         self.lof = final_lof
 
