@@ -76,8 +76,30 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
     verbose : bool, optional(default=False)
         Выводить ли дополнительную информацию?
 
+        
+    calc_error : float, optional
+        Допустимая погрешность вычисления. Это значение будет использоваться для
+        корректировки ошибок округления там, где это может быть важным
+        (например, положительная определённость)
+
+    
+    zero_tol : float, optional (default=1e-12)
+        Абсолютная точность. Используется для определения равно ли число с плавающей точкой нулю.
+        Нужен только для сохранения оригинальных названий из py-earth.
+        Рекомендуется использовать atol - обобщение zero_tol.
+
+    
+    atol : float, optional (default=1e-12)
+        Абсолютная точность. Нужен, в частности, для встречающихся в коде сравнений, а также для
+        корректировки положительно определённых матриц, которые иногда в силу ошибок округления могут таковыми не оказаться.
+        При появлении подобной ошибки уменьшить значения абсоютной и относительной точности.
 
 
+    rtol : float, optional (default=1e-05)
+        Относительная точность. Ситуации применения аналогичны atol.
+        
+
+        
     Атрибуты
     ----------
     `coef_` : array, shape = [pruned basis length, number of outputs]
@@ -121,26 +143,32 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
             self, max_terms=None, max_degree=None, allow_missing=False,
             penalty=None, endspan_alpha=None, endspan=None,
             minspan_alpha=None, minspan=None,
-            thresh=None, zero_tol=None, min_search_points=None,
+            thresh=None, zero_tol=None, atol=None, rtol=None, min_search_points=None,
             check_every=None, allow_linear=None, use_fast=None, fast_K=None,
             fast_h=None, smooth=None, enable_pruning=True,
             feature_importance_type=None, verbose=0):
 
         ### TODO число б.ф. должно быть меньше, чем размерность объектов d
-        self.max_terms = max_terms
+        self.max_terms = max_terms          # +
         self.max_degree = max_degree
-        self.penalty = penalty
-        self.endspan_alpha = endspan_alpha
-        self.endspan = endspan
-        self.minspan_alpha = minspan_alpha
-        self.minspan = minspan
+        self.penalty = penalty              # +
+        self.endspan_alpha = endspan_alpha  # +
+        self.endspan = endspan              # +
+        self.minspan_alpha = minspan_alpha  # +
+        self.minspan = minspan              # +
         self.thresh = thresh
         self.min_search_points = min_search_points
         self.allow_linear = allow_linear
         self.smooth = smooth
-        self.enable_pruning = enable_pruning
+        self.enable_pruning = enable_pruning    # +
         self.feature_importance_type = feature_importance_type
         self.verbose = verbose
+        self.zero_tol = zero_tol # +
+        self.atol = atol         # +
+        self.rtol = rtol         # +
+
+        if (atol == None) and (zero_tol != None):
+            atol = zero_tol
 
         if self.penalty == None:
             self.penalty = 3
@@ -150,19 +178,32 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         self.use_fast = use_fast
         self.fast_K = fast_K
         self.fast_h = fast_h
-        self.zero_tol = zero_tol
         self.check_every = check_every
+
+        ### Из py-earth вычисляемые аттрибуты
+        self.coef_ = None
+        self.basis_ = None
+        self.mse_  = None
+        self.rsq_  = None
+        self.gcv_  = None
+        self.grsq_ = None
+        self.forward_pass_record_ = None
+        self.pruning_pass_record_ = None
+        self.xlabels_ = None
+        self.allow_missing_ = None
+        self.feature_importances_ = None
+
 
         # Нами введённые параметры
         ### TODO добавить поддержку не только GCV.
         ### В частности - поддержку произвольной ф-ции. Для оптимизации использовать численные методы.
         self.method = 'nelder-mead'  # метод оптимизации
-        self.lof = self.gcv  # LOF ф-ция
-        self.lof_value = float('inf')  # зн-ие lof на обученных коэфф-ах
+        self.lof_func = self.gcv_func  # LOF ф-ция
+        self.lof_value = float('inf')  # зн-ие lof на выученных коэфф-ах
         # term_list = [B_1, ..., B_M]  - список б.ф. (term)
         # B = [mult_,1 , ... , mult_K] - список множителей (mult) б.ф. B
-        self.term_list = self.TermListClass([[self.ConstantFunc(1.)], ])
-        self.coeffs = np.array([1.])  # коэфф-ты при б.ф.
+        self.term_list = self.TermListClass([[self.ConstantFunc(1.)], ], coeffs=np.array([1.]))
+        self.coeffs = np.array([1.])  # ввученные коэфф-ты при б.ф.
         self.B = None  # матрица обучающие объекты-б.ф. (чтобы не пересчитывать лишний раз)
 
 
@@ -195,15 +236,16 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         TODO дописать
         """
 
-        def __init__(self, term_list):
+        def __init__(self, term_list, coeffs=None):
             super().__init__(term_list)
+            self.coeffs = coeffs # ассоциированные с б.ф. коэфф-ты
 
         def __repr__(self):
             s = ''
-            for term in self:
+            for coeff_num, term in enumerate(self):
                 for mult in term:
                     s += '[' + str(mult) + '], '
-                s += '\n'
+                s += f'[coeff={self.coeffs[coeff_num]}] \n'
             return s
         
 
@@ -213,8 +255,9 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         TODO дописать
         """
 
-        def __init__(self, term):
+        def __init__(self, term, coeff):
             super().__init__(term)
+            self.coeff = coeff
 
     
     def g_calculation(self, B, coeffs):
@@ -324,9 +367,26 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
         if self.endspan == None:
             self.endspan = 3 - np.log2(self.endspan_alpha / data_dim)
+
+
+    def mse_func(self, B, y, coeffs):
+        """
+        Параметры
+        ----------
+        B: матрица объекты-б.ф.
+        V: скорректированная мат. B.T @ B
+        y: вектор ответов на объектах
+        coeffs: вектор коэфф-ов
+
+
+        Выход
+        ----------
+        значение MSE
+        """
+        pass
         
 
-    def gcv(self, V, B, y, coeffs):
+    def gcv_func(self, V, B, y, coeffs):
         '''
         ### TODO: реализовать в виде класса
         Generalized Cross-Validation criterion (GCV):
@@ -354,6 +414,13 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         c = self.c_calculation(V, B)
         mse_correct = mse / (1 - c / data_count) ** 2
         return mse_correct
+    
+
+    def rss_func(self, ):
+        """
+        
+        """
+        pass
 
 
     def minimize(self, f, x0, args, method='nelder-mead', options={'disp': True}):
@@ -413,8 +480,9 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
     def symmetric_positive_matrix_correct(self, V):
         """
         Ф-ция, корректирующая симметричную, положительно определённую матрицу,
-        добавляя к ней диагональную матрицу, заполненную половиной машинной точности
+        добавляя к ней диагональную матрицу, заполненную self.zero_tol - точностью, вводимой пользователем
         Далее происходит проверка достижения желаемого рез-та.
+        В противном случае выбрасывается исключение.
         
         Параметры
         ----------
@@ -425,11 +493,11 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         ----------
         скорректированная симм. положит. опред. мат. V
         """
-        eps = 100 * np.finfo(np.float32).eps
-        V += np.eye(V.shape[0]) * eps
+        ### TODO разобраться в механизме сдвига СЗ (мб в качестве |b| нужно использовать что-то другое)
+        V += self.atol + np.diag(V) * self.rtol
 
         # проверка на симметричность
-        if not np.array_equal(V, V.T):
+        if not np.allclose(V, V.T, rtol=self.rtol, atol=self.atol):
             raise LA.LinAlgError('Asymmetric matrix!')
 
         # проверка на положительную определённость
@@ -729,7 +797,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         s_prev = np.sum(B_extnd[s_greater_ind, term_num] * (X[s_greater_ind, v] - thres))  # s(u)
 
         coeffs_extnd = self.coeffs_calculation(V_extnd, c_extnd)
-        best_lof = self.lof(B_extnd, y, coeffs_extnd)
+        best_lof = self.lof_func(B_extnd, y, coeffs_extnd)
         best_thres = thres
 
 
@@ -770,7 +838,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
             # при этом зн-я lof* моделей g и g' (со своими наборами коэфф-тов) совпадают =>
             # => совпадают оптимальные пороги t*
             coeffs_extnd = self.coeffs_calculation(V_extnd, c_extnd)
-            lof = self.lof(B_extnd, y, coeffs_extnd)
+            lof = self.lof_func(B_extnd, y, coeffs_extnd)
 
             if lof < best_lof:
                 best_lof = lof
@@ -929,8 +997,8 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         data_count, data_dim = X.shape
         term_count = 2  # M <- 2
 
-        final_coeffs = np.array([1.])
-        final_lof = float('inf')
+        final_coeffs = None
+        final_lof = None
 
         # создаём б.ф. пока не достигнем макс. кол-ва
         while term_count <= self.max_terms:
@@ -984,7 +1052,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
                         V = self.symmetric_positive_matrix_correct(B.T @ B)
                         c = B.T @ y
                         coeffs = self.coeffs_calculation(V, c)
-                        lof = self.lof(V, B, y, coeffs)
+                        lof = self.lof_func(V, B, y, coeffs)
                         if lof < best_lof:
                             best_lof  = lof
                             best_term = term
@@ -1009,9 +1077,20 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
             self.term_list.append(term_with_minus)
             term_count += 2  # M <- M + 2
 
-        # зн-е lof и набор коэфф-ов после прохода вперёд
-        self.coeffs = final_coeffs
-        self.lof_value = final_lof
+        if (final_coeffs == None) and (final_lof == None):
+            # используется только константная ф-ция
+            # решением будет среднее и получается оно также использованием МНК
+            B = self.b_calculation(X, self.term_list)
+            V = self.symmetric_positive_matrix_correct(B.T @ B)
+            c = B.T @ y
+            self.coeffs = self.coeffs_calculation(V, c)
+            self.term_list.coeffs = self.coeffs
+            self.lof_value = self.lof_func(V, B, y, self.term_list.coeffs)
+        else:
+            # зн-е lof и набор коэфф-ов после прохода вперёд (для уменьшения вычислений)
+            self.coeffs = final_coeffs
+            self.term_list.coeffs = final_coeffs
+            self.lof_value = final_lof
 
         return self
 
@@ -1067,7 +1146,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
                 # находим оптимальные коэфф-ты, считаем lof без очередной б.ф.
                 B = self.b_calculation(X, K)
                 coeffs = self.coeffs_calculation(B, y)
-                lof = self.lof(B, y, coeffs)
+                lof = self.lof_func(B, y, coeffs)
 
                 if lof < b:
                     # локальное улучшение
@@ -1132,7 +1211,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         """
         # подсчёт ф-ции g(x) на оптимальном наборе б.ф. и их коэффициентов
         B = self.b_calculation(X, self.term_list)
-        res = self.g_calculation(B, self.coeffs)
+        res = self.g_calculation(B, self.term_list.coeffs)
         return res
 
 
