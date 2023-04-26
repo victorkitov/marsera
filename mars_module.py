@@ -167,11 +167,12 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         self.atol = atol         # +
         self.rtol = rtol         # +
 
-        if (atol == None) and (zero_tol != None):
-            atol = zero_tol
 
-        if self.penalty == None:
-            self.penalty = 3
+        if self.minspan == None:
+            self.minspan = -1
+
+        if self.endspan == None:
+            self.endspan = -1
 
         ### Пока не реализуем
         self.allow_missing = allow_missing
@@ -197,14 +198,13 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         # Нами введённые параметры
         ### TODO добавить поддержку не только GCV.
         ### В частности - поддержку произвольной ф-ции. Для оптимизации использовать численные методы.
-        self.method = 'nelder-mead'  # метод оптимизации
-        self.lof_func = self.gcv_func  # LOF ф-ция
+        self.method = 'nelder-mead'    # метод оптимизации
+        self.lof_func = self.mse_func  # LOF ф-ция
         self.lof_value = float('inf')  # зн-ие lof на выученных коэфф-ах
         # term_list = [B_1, ..., B_M]  - список б.ф. (term)
-        # B = [mult_,1 , ... , mult_K] - список множителей (mult) б.ф. B
+        # B = [mult_1 , ... , mult_K] - список множителей (mult) б.ф. B
         self.term_list = self.TermListClass([[self.ConstantFunc(1.)], ], coeffs=np.array([1.]))
-        self.coeffs = np.array([1.])  # ввученные коэфф-ты при б.ф.
-        self.B = None  # матрица обучающие объекты-б.ф. (чтобы не пересчитывать лишний раз)
+        self.B = None  # мат. обучающие объекты-б.ф.
 
 
     ### Множества нужны для verbose, trace и т.д.
@@ -262,18 +262,20 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
     
     def g_calculation(self, B, coeffs):
         '''
-        Ф-ция, реализующая ф-цию g(x):
+        Ф-ция, реализующая вычисление g(x):
             g(x) = a_1 * B_1(x) + ... + a_M * B_M(x)
+            B_i - i-ая б.ф.
+            a_i - коэфф-т при i-ой б.ф.
 
         Параметры
         ----------
-        B: матрица объекты-б.ф.
-        coeffs: вектор коэффициентов
+        B: матрица, объекты-б.ф.
+        coeffs: вектор, коэффициенты при б.ф.
 
 
         Выход
         ----------
-        вектор значений ф-ции g(x) на эл-тах обуч.
+        вектор, значения ф-ции g(x) на объектах обуч. выборки
         '''
         g = B @ coeffs
         return g
@@ -281,13 +283,13 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
     def term_calculation(self, X, term):
         '''
-        Ф-ция, реализующая вычисление б.ф. B_m(x):
+        Ф-ция, реализующая вычисление б.ф. B_m:
             B_m(x) = mult_{m,1}(x) * ... * mult_{m,K_m}(x)
 
         Параметры
         ----------
         X: матрица объектов
-        term: б.ф. B_m(x)
+        term: б.ф. B_m
 
         
         Выход
@@ -302,8 +304,8 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
     def b_calculation(self, X, term_list):
         '''
-        Ф-ция, вычисляющая матрицу B:
-            B[i,m] = B_m(x[i])
+        Ф-ция, реализующая вычисление матрицы B:
+            B[i,m] = B_m(x_i)
 
         Параметры
         ----------
@@ -323,97 +325,137 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         return B
 
 
-    def c_calculation(self, V, B):
+    def c_calculation(self, V, B, b_mean=0):
         '''
         Ф-ция, вычисляющая поправочный коэффициент C_correct(M).
-            C(M) = trace(B @ (B^T @ B)^(-1) @ B^T) + 1
+            C(M) = trace(B @ (B.T @ B)^(-1) @ B.T) + 1
             C_correct(M) = C(M) + d*M
             B[i,m] = B_m(x_i)
-        ### TODO: добавить простую эвристику вычисления C из книжки
+        TODO добавить простую эвристику вычисления C из книжки
             
         Параметры
         ----------
-        B: матрица объекты-б.ф.
-        V: скорректированная матрица B.T @ B
+        B: матрица, объекты-б.ф.
+        V: матрица, скорректированная симм. полож. опред. V = B.T @ B
+        b_mean: вектор, усреднённая по объектам мат. B (по умолчанию = 0)
+            Выполняется ли нормализация мат. B (по умолчанию соотв. нет)?
+            Если не None, то считается, что матрица V уже учитывает нормирование мат. B.
 
 
         Выход
         ----------
-        поправочный коэффициент C_correct(M)
+        float, поправочный коэффициент C_correct(M)
         '''
+        if self.penalty == None:
+            self.penalty = 3
+
+        # если b_mean != None => в V уже использована нормализованная мат. B (V = B^T @ (B - B_mean)) =>
+        # => мат. B, которая используется в формуле для C(M), также должна быть нормализована
+        
         term_count = B.shape[1]
-        C = np.trace(B @ LA.inv(V) @ B.T) + 1
+        B_mod = B - b_mean
+        C = np.trace(B_mod @ LA.inv(V) @ B.T) + 1
         C_correct = C + self.penalty * term_count
         return C_correct
     
 
-    def minspan_endspan_calculation(self, b, data_dim):
+    def minspan_endspan_calculation(self, nonzero_count, data_dim):
         '''
         Ф-ция, вычисляющая L(alpha) и Le(alpha):
-            L(alpha) задаёт шаг из порогов между соседними узлами
-            Le(alpha) задаёт отступ из порогов для граничных узлов 
+            L(alpha)  - задаёт шаг из порогов между соседними узлами
+            Le(alpha) - задаёт отступ из порогов для граничных узлов 
         Смысл - сглаживание, скользящее окно.
+        Ф-ция изменяет атрибуты объекта.
             
         Параметры
         ----------
-        b: вектор - значения б.ф. B_m на объектах из обуч. выборки
-        data_dim: размерность объектов
-        '''
-        term_nonzero_count = np.count_nonzero(b)
-
-        if self.minspan == None:
-            self.minspan = -np.log2(-1 / (data_dim * term_nonzero_count) *
-                               np.log(1 - self.minspan_alpha)) / 2.5
-
-        if self.endspan == None:
-            self.endspan = 3 - np.log2(self.endspan_alpha / data_dim)
-
-
-    def mse_func(self, B, y, coeffs):
-        """
-        Параметры
-        ----------
-        B: матрица объекты-б.ф.
-        V: скорректированная мат. B.T @ B
-        y: вектор ответов на объектах
-        coeffs: вектор коэфф-ов
+        nonzero_count: int, число объектов, на которых значение б.ф. B_m не равно 0
+        data_dim: int, размерность объектов
 
 
         Выход
         ----------
-        значение MSE
+        (minspan, endspan) (int, int) - значения L и Le соотв.
+        '''
+        if self.minspan_alpha == None:
+            self.minspan_alpha = 0.05
+
+        if self.endspan_alpha == None:
+            self.endspan_alpha = 0.05
+
+
+        # не работаем с self.minspan и self.endspan,
+        # т.к. их значения в конкретном случае зависят от б.ф. B_m
+        minspan = self.minspan
+        endspan = self.endspan
+
+
+        if minspan == -1:
+            minspan = int(-np.log2(-1 / (data_dim * nonzero_count) *
+                          np.log(1 - self.minspan_alpha)) / 2.5)
+
+        if endspan == -1:
+            endspan = int(3 - np.log2(self.endspan_alpha / data_dim))
+
+
+        return minspan, endspan
+
+
+    def mse_func(self, B, y, a, **kwargs):
         """
-        pass
+        Mean Squared Error (MSE):
+            MSE = 1/N * sum([y_i - f(x_i)]^2)
+            f(x) = g(x) = B @ a
+
+        Параметры
+        ----------
+        B: матрица объекты-б.ф.
+        y: вектор, ответы на объектах
+        a: вектор, коэфф-ты при б.ф.
+
+
+        Выход
+        ----------
+        float, значение MSE
+        """
+        y_pred = self.g_calculation(B, a)
+        mse = np.mean((y - y_pred) ** 2)
+        return mse
         
 
-    def gcv_func(self, V, B, y, coeffs):
+    def gcv_func(self, B, y, coeffs, V=None, b_mean=0):
         '''
-        ### TODO: реализовать в виде класса
+        TODO реализовать в виде класса
         Generalized Cross-Validation criterion (GCV):
-            GCV(M) = 1/N * sum([y_i - f(x_i)]^2) / [1 - C_correct(M)/N]^2
+            GCV(M) = 1/N * sum([y_i - f(x_i)]^2) / [1 - C_correct(M)/N]^2 <=>
+            GCV(M) = MSE / [1 - C_correct(M)/N]^2
             C_correct(M) = C(M) + d*M
-            C(M) = trace(B @ (B^T @ B)^(-1) @ B^T) + 1
+            C(M) = trace(B @ (B.T @ B)^(-1) @ B.T) + 1
+            f(x) = g(x)
             Смысл C - число лин. нез. б.ф.
             Смысл GCV - скорректированный MSE, учитывающий возрастание дисперсии, вызванное увеличением кол-ва б.ф. 
         
         Параметры
         ----------
-        B: матрица объекты-б.ф.
-        V: скорректированная мат. B.T @ B
-        y: вектор ответов на объектах
-        coeffs: вектор коэфф-ов
+        B: матрица, объекты-б.ф.
+        y: вектор, ответы на объектах
+        coeffs: вектор, коэфф-ты при б.ф.
+        V: матрица, скорректированная симм. полож. опред. V = B.T @ B
+            (обязательный параметр)
+        b_mean: вектор, усреднённая по объектам мат. B (по умолчанию = 0)
+            Выполняется ли нормализация мат. B (по умолчанию соотв. нет)?
+            Если не None, то считается, что матрица V уже учитывает нормирование мат. B.
 
 
         Выход
         ----------
-        значение GCV
+        float, значение GCV
         '''
         data_count = y.size
-        y_pred = self.g_calculation(B, coeffs)
-        mse = np.mean((y - y_pred) ** 2)
-        c = self.c_calculation(V, B)
-        mse_correct = mse / (1 - c / data_count) ** 2
-        return mse_correct
+        mse = self.mse_func(B, y, coeffs)
+        C = self.c_calculation(V, B, b_mean=b_mean)
+        gcv = mse / (1 - C / data_count) ** 2
+        return gcv
     
 
     def rss_func(self, ):
@@ -444,27 +486,31 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         return argmin
 
 
-    def coeffs_calculation(self, V, c):
+    def analytically_pseudo_solves_slae(self, V, c):
         """
-        Ф-ция, аналитически вычисляющая коэфф-ты МНК методом Холецкого:
+        Ф-ция, аналитически вычисляющая псевдорешение СЛАУ (МНК) методом Холецкого:
         V @ a = c, V = L @ L^T
         Где:
             V - симметричная, положительно определённая матрица
             L - нижн. треуг. матрица
+        Используется для нахождения коэфф-ов.
 
         Параметры
         ----------
-        V: матрица B.T @ B
-        c: вектор B.T @ y
+        V: матрица, симм. положит. опред. (подразумевается, что B.T @ B)
+        c: вектор (подразумевается, что B.T @ y)
 
 
         Выход
         ----------
-        коэфф-ты при б.ф. в модели
+        коэфф-ты при б.ф.
         """
+
         # V @ a = (L @ L^T) @ a = L @ (L^T @ a) = L @ b = c
         # b = L^T @ a
         
+        # Разложение методом Холецкого
+        #L = self.modified_cholesky(V, c, L)
         L = LA.cholesky(V)
 
         # Решение системы L @ b = c
@@ -473,38 +519,102 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         # Решение системы L^T @ a = b
         a = LA.solve(L.T, b)
 
-        ### TODO: Мб есть оптимизатор, в котором можно явно выбрать метод Холецкого?
+        ### TODO Мб есть оптимизатор, в котором можно явно выбрать метод Холецкого?
         return a
     
 
-    def symmetric_positive_matrix_correct(self, V):
+    def coeffs_and_lof_calculation(self, A, y, term_list, for_X=True, need_lof=True):
         """
-        Ф-ция, корректирующая симметричную, положительно определённую матрицу,
-        добавляя к ней диагональную матрицу, заполненную self.zero_tol - точностью, вводимой пользователем
+        Ф-ция, вычисляющая оптимальные коэфф-ты при б.ф. и итоговое зн-ие lof.
+
+        Параметры
+        ----------
+        A: матрица
+            если for_X=True  => выборка X
+            если for_X=False => матрица объекты-б.ф. B
+        y: вектор, ответы на объектах
+        term_list: обёртка над списком, набор б.ф.
+        for_X: bool, явл-ся ли матрица A выборкой X? (по умолчанию True)
+               В противном случае считается, что A - матрица объекты-б.ф. B.
+        need_lof: bool, нужно ли вычислять lof? (по умолчанию True)
+        TODO мб дописать и для 'V'
+
+
+        Выход
+        ----------
+        (coeffs, lof): коэфф-ты при б.ф. и зн-ие lof
+        """
+        if for_X:
+            X = A
+            B = self.b_calculation(X, term_list)
+        else:
+            B = A
+        V = self.symmetric_positive_matrix_correct(B.T @ B)
+        c = B.T @ y
+
+        coeffs = self.analytically_pseudo_solves_slae(V, c)
+
+        lof = None
+        if need_lof:
+            lof = self.lof_func(B, y, coeffs, V=V)
+        return (coeffs, lof)
+    
+
+    def symmetric_positive_matrix_correct(self, A):
+        """
+        Ф-ция, корректирующая потенциально симметричную положительно определённую матрицу,
+        добавляя к ней диагональную матрицу, определяемую атрибутами точности: atol, rtol и zero_tol.
         Далее происходит проверка достижения желаемого рез-та.
         В противном случае выбрасывается исключение.
         
         Параметры
         ----------
-        V: потенциально симм. полож. опред. мат.
+        A: матрица, потенциально симм. полож. опред.
 
 
         Выход
         ----------
-        скорректированная симм. положит. опред. мат. V
+        матрица, с некоторой точностью симм. положит. опред.
         """
+        if (self.atol == None) and (self.zero_tol != None):
+            self.atol = self.zero_tol
+
+        if self.atol == None:
+            self.atol = 1e-04
+
+        if self.rtol == None:
+            self.rtol = 1e-05
+
+
         ### TODO разобраться в механизме сдвига СЗ (мб в качестве |b| нужно использовать что-то другое)
-        V += self.atol + np.diag(V) * self.rtol
+        A += np.diag(self.atol + np.diag(A) * self.rtol)
 
         # проверка на симметричность
-        if not np.allclose(V, V.T, rtol=self.rtol, atol=self.atol):
+        if not np.allclose(A, A.T, rtol=self.rtol, atol=self.atol):
             raise LA.LinAlgError('Asymmetric matrix!')
 
         # проверка на положительную определённость
-        if not np.all(LA.eigvalsh(V) > 0):
+        if not np.all(LA.eigvalsh(A) > 0):
             raise LA.LinAlgError('Matrix is not positive definite!')
 
-        return V
+        return A
+    
+
+    def modified_cholesky(self,):
+        """
+        Ф-ция, реализующая разложение Холецкого с частичным пересчётом элементов выходной матрицы L.
+
+        Параметры
+        ----------
+        V: матрица, симм. полож. опред.
+        L: матрица, треугольная L с прошлой итерации
+
+
+        Выход
+        ----------
+        матрица, треугольная L
+        """
+        pass
 
 
     class ConstantFunc():
@@ -746,108 +856,121 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
                                    r_minus * (X[:, self.v] - self.t_plus) ** 3)
 
 
-    def knot_optimization(self, X, y, terms, new_basis, sorted_features, splines_type='default', **kwargs):
+    def knot_optimization(self, X, y, B, fixed_values, sorted_features, splines_type='default', **kwargs):
         """
-        Ф-ция находит лучший узел при фиксированной б.ф. B_m и координате v.
+        Ф-ция находит лучший узел t при фиксированной б.ф. B_m и координате v.
 
         Параметры
         ----------
         X : обучающая выборка
         y : отлклики
-        terms : список уже созданных б.ф.
-        new_basis : (term_num, term, v) - фиксированная б.ф. и координата v
+        B : матрица объекты-б.ф.
+        fixed_values : (m, v) - номер фикс. б.ф. и фикс. координата v
         sorted_features : отсортированный по возрастанию список перебираемых координат
-        splines_type : ?
-        ### Не знаю зачем нам нужно передавать sorted_features, если мы и так передаём X?
-        ### Мб чтобы не сортировать лишний раз?
+        splines_type :
 
 
         Выход
         ----------
-        (best_thres, best_lof) : лучший порог и значение LOF на нём
+        (best_t, best_lof) : лучший порог и значение lof
         """
-        data_count, data_dim = X.shape
-        term_num, term, v = new_basis
-        B = self.b_calculation(X, terms)
-        # B_extnd - расширенная матрица B, она не явл-ся матрицей объекты-б.ф.,
-        #  т.к. в последних двух столбцах используются не б.ф.
-        B_extnd = np.hstack([B, np.empty((data_count, 2))])
+        N, d = X.shape # N - кол-во объектов, d - размерность объекта
+        m, v = fixed_values
 
+        x_v = X[:, v]
+        B_m = B[:, m]
 
-        # Прореживание мн-ва перебираемых порогов.
-        self.minspan_endspan_calculation(B[:, term_num], data_dim)
-        thin_sorted_features = sorted_features[self.endspan:-self.endspan:self.minspan]
-        if thin_sorted_features.size == 0:
-            return (None, float('inf'))
+        # B_extnd - расширенная матрица B, она не явл-ся матрицей объекты-б.ф.
+        # т.к. в последних двух столбцах используются не б.ф.
+        B_extnd = np.hstack([B, np.empty((N, 2))])
+
+        # Заполняем последние 2 столбца матрицы B_extnd 2-мя последними слагаемыми из g' (они не б.ф.)
+        B_extnd[:, -2] = B_m * x_v  # B_m(x) * x[v]
+        B_extnd[:, -1] = 0          # B_m(x) * [x[v] - t]_+ == 0 (t - самый крайний порог)
         
 
-        # заполняем последние 2 столбца матрицы B_extnd 2-мя последними слагаемыми из g' (они не б.ф.)
-        thres = thin_sorted_features[-1]
-        B_extnd[:, -2] = B_extnd[:, term_num] * X[:, v]                         # B_m(x) * x[v]
-        B_extnd[:, -1] = B_extnd[:, term_num] * np.maximum(X[:, v] - thres, 0)  # B_m(x) * (x[v] - t)_+
-        b_extnd_mean = np.mean(B_extnd, axis=0)
+        # Прореживание мн-ва перебираемых порогов
+        N_m = np.count_nonzero(B_m)
+        minspan, endspan = self.minspan_endspan_calculation(N_m, d)
+        thin_sorted_features = sorted_features#[endspan:-endspan:minspan]
+        if thin_sorted_features.size == 0:
+            return (None, float('inf'))
+        t = thin_sorted_features[-1]
+
+
+        # Нормализация:
+        #   B @ a = y <=> {нормализация} <=> (B - B_mean) @ a = y - y_mean --->
+        #   ---> {B.T @ (...)} --->
+        #   ---> [B.T @ (B - B_mean)] @ a = B.T @ (y - y_mean) <=> V @ a = c
         y_mean = np.mean(y)
-
-        # B @ a = y ---> (B^T @ B) @ a = (B^T @ y) = V @ a = c
-        ### TODO: Попробовать без нормализации и с полной нормализацией.
-        V_extnd = (B_extnd - b_extnd_mean).T @ B_extnd
-        c_extnd = (y - y_mean).T @ B_extnd
-
-        s_greater_ind = np.nonzero(X[:, v] >= thres)
-        s_prev = np.sum(B_extnd[s_greater_ind, term_num] * (X[s_greater_ind, v] - thres))  # s(u)
-
-        coeffs_extnd = self.coeffs_calculation(V_extnd, c_extnd)
-        best_lof = self.lof_func(B_extnd, y, coeffs_extnd)
-        best_thres = thres
+        b_extnd_mean = np.mean(B_extnd, axis=0)
+        V_extnd = self.symmetric_positive_matrix_correct(B_extnd.T @ (B_extnd - b_extnd_mean))
+        c_extnd = B_extnd.T @ (y - y_mean)
 
 
-        # цикл по порогам                             t <= u
-        thres_prev = thres                          # thres_prev -> u
-        for thres in thin_sorted_features[-2::-1]:  # thres -> t
-            if self.term_calculation(thres, term) == 0: ###?
-                continue
-            between_ind = np.nonzero(thres < X[:, v] < thres_prev)
-            greater_ind = np.nonzero(X[:, v] >= thres_prev)
-            s_greater_ind = np.nonzero(X[:, v] >= thres)
-            s = np.sum(B_extnd[s_greater_ind, term_num] * (X[s_greater_ind, v] - thres))  # s(t)
+        coeffs_extnd = self.analytically_pseudo_solves_slae(V_extnd, c_extnd)
+
+        best_lof = self.lof_func(B_extnd, y, coeffs_extnd, V=V_extnd, b_mean=b_extnd_mean)
+        best_t = t
+
+
+        # Цикл по порогам от больших к меньшим, t <= u
+        u = t
+        s_u = 0
+        for t in thin_sorted_features[-2::-1]:
+            ### if B(x)>0
+
+            between_inds = np.nonzero((t <= x_v) & (x_v < u))[0]
+            greater_inds = np.nonzero(x_v >= u)[0]
+
+            # Обновляем последнее слагаемое в g', которое только одно зав-т от порога t
+            B_extnd[:, -1] = B_m * np.maximum(x_v - t, 0)  # B_m(x) * [x[v] - t]_+
+            b_extnd_mean[-1] = np.mean(B_extnd[:, -1])
 
             # c[M+1]
-            c_extnd[-1] += np.sum((y[between_ind] - y_mean) * B_extnd[between_ind, term_num] *
-                                  (X[between_ind, v] - thres)) + \
-                           (thres_prev - thres) * \
-                           np.sum((y[greater_ind] - y_mean) *
-                                  B_extnd[greater_ind, term_num])
+            c_extnd[-1] += np.sum((y[between_inds] - y_mean) * B_m[between_inds] *
+                                  (x_v[between_inds] - t)) + \
+                           (u - t) * np.sum((y[greater_inds] - y_mean) * B_m[greater_inds])
 
             # V[i,M+1], i = 1..M => {симметричность матрицы V} => V[M+1,i], i = 1..M
-            V_extnd[:-1, -1] += np.sum((B_extnd[between_ind, :-1] - b_extnd_mean[:-1]) * 
-                                       B_extnd[between_ind, term_num][:, np.newaxis] *
-                                       (X[between_ind, v] - thres)[:, np.newaxis], axis=0) + \
-                                (thres_prev - thres) * \
-                                np.sum((B_extnd[greater_ind, :-1] - b_extnd_mean[:-1]) *
-                                       B_extnd[greater_ind, term_num][:, np.newaxis], axis=0)
+            V_extnd[:-1, -1] += np.sum((B_extnd[between_inds, :-1] - b_extnd_mean[:-1]) * 
+                                       B_m[between_inds][:, np.newaxis] *
+                                       (x_v[between_inds] - t)[:, np.newaxis], axis=0) + \
+                                (u - t) * np.sum((B_extnd[greater_inds, :-1] - b_extnd_mean[:-1]) *
+                                                 B_m[greater_inds][:, np.newaxis], axis=0)
             V_extnd[-1, :-1] = V_extnd[:-1, -1]
-
+            
             # V[M+1,M+1]
-            V_extnd[-1, -1] += np.sum((B_extnd[between_ind, term_num] * (X[between_ind, v] - thres)) ** 2) + \
-                               (thres_prev - thres) * \
-                               np.sum(B_extnd[greater_ind, term_num] ** 2 *
-                                      (2 * X[greater_ind, v] - thres - thres_prev)) + \
-                               (s_prev ** 2 - s ** 2) / data_count
+            s_greater_inds = np.nonzero(x_v >= t)[0]
+            s_t = np.sum(B_m[s_greater_inds] * (x_v[s_greater_inds] - t))
 
-            # находим коэфф-ты, отвечающие ф-ции g' и отличающиеся от оптимальных для соотв-го набора б.ф.
-            # при этом зн-я lof* моделей g и g' (со своими наборами коэфф-тов) совпадают =>
-            # => совпадают оптимальные пороги t*
-            coeffs_extnd = self.coeffs_calculation(V_extnd, c_extnd)
-            lof = self.lof_func(B_extnd, y, coeffs_extnd)
+            V_extnd[-1, -1] += np.sum((B_m[between_inds] * (x_v[between_inds] - t)) ** 2) + \
+                               (u - t) * np.sum(B_m[greater_inds] ** 2 *
+                                                (2 * x_v[greater_inds] - t - u)) + \
+                               (s_u ** 2 - s_t ** 2) / N
+
+
+            V_extnd = self.symmetric_positive_matrix_correct(V_extnd)
+
+            # Находим коэфф-ты
+            #   Они отвечают ф-ции g' и отличаются от оптимальных для набора б.ф.
+            #   При этом зн-я lof* моделей g и g' на своих оптимальных наборах коэфф-тов совпадают =>
+            #   => совпадают оптимальные пороги t*
+            coeffs_extnd = self.analytically_pseudo_solves_slae(V_extnd, c_extnd)
+
+            # Находим lof*
+            lof = self.lof_func(B_extnd, y, coeffs_extnd, V=V_extnd, b_mean=b_extnd_mean)
 
             if lof < best_lof:
                 best_lof = lof
-                best_thres = thres
+                best_t = t
+            
+            #print(f'v: {v}, m: {m}, t: {t}, lof: {lof}, best_lof: {best_lof}')
 
-            s_prev = s
-            thres_prev = thres
+            u = t
+            s_u = s_t
 
-        return (best_thres, best_lof)
+        return (best_t, best_lof)
 
 
     ### Дополнительные ф-ции, которые использовались в py-earth.
@@ -973,124 +1096,101 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         # g(x) - модель:
         #   g(x) = a_1 * B_1(x) + ... + a_M * B_M(x)
         #     M - кол-во б.ф. ---> term_count
-        #     B - б.ф. ---> term
+        #     B_i - i-ая б.ф. ---> term
         #     B(x) = mult_1 * ... * mult_K
         #     B_1 = const_func
         #       Виды множителей в б.ф. ---> mult:
-        #       1) [s_1 * (x[v_1] - t_1)]_+     - положительная срезка
-        #       2) [(s_1 * (x[v_1] - t_1))^q]_+ - степенная положительная срезка
-        #       3) [s_1 * (x[v_1] - t_1)]       - индикаторная ф-ция
-        #       4) s_1 * (x[v_1] - t_1)         - линейная ф-ция
-        #       5) const_func                   - константная ф-ция
-        #       6) cubic_func                   - кубический сплайн с 1ой непр-ой произв-ой
+        #       1) [s * (x[v] - t)]_+     - положительная срезка
+        #       2) [(s * (x[v] - t))^q]_+ - степенная положительная срезка
+        #       3) [s * (x[v] - t)]       - индикаторная ф-ция
+        #       4) s * (x[v] - t)         - линейная ф-ция
+        #       5) const_func             - константная ф-ция
+        #       6) cubic_func             - кубический сплайн с 1ой непр-ой произв-ой
         #         [...]   - скобка Айверсона
         #         [...]_+ - положительная срезка
-        #         K       - кол-во множителей в б.ф.
-        #         s_j     - знак j-ого множителя
-        #         v_j     - координата x j-ого множителя
-        #         t_j     - порог j-ого множителя
+        #         K - кол-во множителей в б.ф.
+        #         s - знак множителя
+        #         v - координата x множителя
+        #         t - порог множителя
         #   a_i - коэф-т при i-ой б.ф.
         #   N   - кол-во объектов ---> data_count
         #   x = (x_1 , ... , x_d)
-        #     d - размерность ---> data_dim
+        #     d - размерность данных ---> data_dim
 
         data_count, data_dim = X.shape
+        X_sorted = np.sort(X, axis=0)
+        B = np.ones((data_count, 1))
+
+        best_lof = None
         term_count = 2  # M <- 2
-
-        final_coeffs = None
-        final_lof = None
-
         # создаём б.ф. пока не достигнем макс. кол-ва
         while term_count <= self.max_terms:
             best_lof = float('inf')  # lof* <- +inf
+            best_term_num = None
+            best_term = None
+            best_v = None
+            best_t = None
 
             # перебираем уже созданные б.ф.
             for term_num, term in enumerate(self.term_list):
                 # формируем мн-во уже использованных (невалидных) координат
-                ### TODO: можно хранить для каждой б.ф. мн-во неиспользованных координат, будет ли ускорение?
-                not_valid_coords = []
-                # если это не константная б.ф. B_1
-                ### TODO сделать соответствующую ф-цию добавления в классе б.ф.
+                ### TODO можно хранить для каждой б.ф. мн-во неиспользованных координат, будет ли ускорение?
+                not_valid_v_list = []
                 for mult in term:
+                    # если это не константная б.ф. B_1
+                    ### TODO сделать соответствующую ф-цию добавления в классе б.ф.
                     if type(mult) != self.ConstantFunc:
-                        not_valid_coords.append(mult.v)
+                        not_valid_v_list.append(mult.v)
                 # формируем мн-во ещё не занятых (валидных) координат
-                valid_coords = [coord for coord in range(0, data_dim) if coord not in not_valid_coords]
+                valid_v_list = [v for v in range(0, data_dim) if v not in not_valid_v_list]
 
-                # перебираем все ещё не занятые координаты
-                for v in valid_coords:
-                    ### TODO:
-                    ### t_plus и t_minus предлагается выбрать как среднее между 
-                    ###  t и соседними узлами справа и слева
+                # перебираем все ещё не занятые координаты v
+                for v in valid_v_list:
+                    ### TODO t_plus и t_minus предлагается выбрать как среднее между t и соседними узлами справа и слева
 
-                    # перебираем пороги t (обучающие данные)
-                    for ind in range(data_count):
-                        # учитываем только нетривиальные пороги
-                        x = X[ind][np.newaxis, :]
-                        if self.term_calculation(x, term) == 0:
-                            continue
-                        t = x[0, v]
+                    # находим лучший порог t и соотв. lof при фикс. б.ф. B_m и координате v
+                    x_sorted = X_sorted[:, v]
+                    fixed_values = (term_num, v)
+                    t, lof = self.knot_optimization(X, y, B, fixed_values, x_sorted)
 
-                        # создаём новые множители
-                        mult_with_plus  = self.ReluFunc(-1, v, t)
-                        mult_with_minus = self.ReluFunc(+1, v, t)
-
-                        # создаём новые б.ф.
-                        ### мб нужно copy.deepcopy
-                        term_with_plus  = list(term)
-                        term_with_minus = list(term)
-                        term_with_plus.append(mult_with_plus)    # B'_M  = B_m * mult_+
-                        term_with_minus.append(mult_with_minus)  # B'_{M+1} = B_m * mult_-
-
-                        # добавляем в список б.ф. новые б.ф.
-                        term_list = list(self.term_list)
-                        term_list.append(term_with_plus)
-                        term_list.append(term_with_minus)
-
-                        # находим оптимальные коэфф-ты МНК методом Холецкого, считаем lof
-                        B = self.b_calculation(X, term_list)
-                        V = self.symmetric_positive_matrix_correct(B.T @ B)
-                        c = B.T @ y
-                        coeffs = self.coeffs_calculation(V, c)
-                        lof = self.lof_func(V, B, y, coeffs)
-                        if lof < best_lof:
-                            best_lof  = lof
-                            best_term = term
-                            best_v = v
-                            best_t = t
-                            final_coeffs = coeffs
-                            final_lof = lof
-        
+                    if lof < best_lof:
+                        best_lof  = lof
+                        best_term_num = term_num
+                        best_term = term
+                        best_v = v
+                        best_t = t
             
-            # создаём лучшие множители
-            mult_with_plus  = self.ReluFunc(-1, best_v, best_t)
-            mult_with_minus = self.ReluFunc(+1, best_v, best_t)
+            # создаём новые множители (TODO пока только ReLU)
+            mult_plus  = self.ReluFunc(+1, best_v, best_t)
+            mult_minus = self.ReluFunc(-1, best_v, best_t)
 
-            # создаём лучшие б.ф.
-            term_with_plus  = list(best_term)
-            term_with_minus = list(best_term)
-            term_with_plus.append(mult_with_plus)    # B_M
-            term_with_minus.append(mult_with_minus)  # B_{M+1}
+            # создаём новые б.ф.
+            term_plus  = list(best_term)  # B_M
+            term_minus = list(best_term)  # B_{M+1}
+            term_plus.append(mult_plus)
+            term_minus.append(mult_minus)
 
-            # добавляем в список б.ф. лучшие б.ф.
-            self.term_list.append(term_with_plus)
-            self.term_list.append(term_with_minus)
+            # добавляем новые б.ф. к уже имеющимся (коэфф-ты при б.ф. добавляются только в самом конце)
+            ### TODO а если макс. кол-во функций будет равно 3, то что тогда?
+            self.term_list.append(term_plus)
+            self.term_list.append(term_minus)
+
+            # добавляем к матрице B новые столбцы
+            #b_term_plus  = self.b_calculation(X, [term_plus])
+            #b_term_minus = self.b_calculation(X, [term_minus])
+            b_term_plus  = (B[:, best_term_num] * np.maximum(+1 * (X[:, best_v] - best_t), 0))[:, np.newaxis]
+            b_term_minus = (B[:, best_term_num] * np.maximum(-1 * (X[:, best_v] - best_t), 0))[:, np.newaxis]
+            B = np.hstack((B, b_term_plus, b_term_minus))
+
             term_count += 2  # M <- M + 2
 
-        if (final_coeffs == None) and (final_lof == None):
-            # используется только константная ф-ция
-            # решением будет среднее и получается оно также использованием МНК
-            B = self.b_calculation(X, self.term_list)
-            V = self.symmetric_positive_matrix_correct(B.T @ B)
-            c = B.T @ y
-            self.coeffs = self.coeffs_calculation(V, c)
-            self.term_list.coeffs = self.coeffs
-            self.lof_value = self.lof_func(V, B, y, self.term_list.coeffs)
-        else:
-            # зн-е lof и набор коэфф-ов после прохода вперёд (для уменьшения вычислений)
-            self.coeffs = final_coeffs
-            self.term_list.coeffs = final_coeffs
-            self.lof_value = final_lof
+
+        # Нахождение коэфф-ов построенной модели
+        final_coeffs, _ = self.coeffs_and_lof_calculation(B, y, self.term_list, for_X=False, need_lof=False)
+        final_lof = best_lof
+        self.term_list.coeffs = final_coeffs
+        self.lof_value = final_lof
+        self.B = B
 
         return self
 
@@ -1145,7 +1245,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
                 # находим оптимальные коэфф-ты, считаем lof без очередной б.ф.
                 B = self.b_calculation(X, K)
-                coeffs = self.coeffs_calculation(B, y)
+                coeffs = self.analytically_pseudo_solves_slae(B, y)
                 lof = self.lof_func(B, y, coeffs)
 
                 if lof < b:
@@ -1211,8 +1311,8 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         """
         # подсчёт ф-ции g(x) на оптимальном наборе б.ф. и их коэффициентов
         B = self.b_calculation(X, self.term_list)
-        res = self.g_calculation(B, self.term_list.coeffs)
-        return res
+        y_pred = self.g_calculation(B, self.term_list.coeffs)
+        return y_pred
 
 
     def predict_deriv(self, X, variables=None, missing=None):
