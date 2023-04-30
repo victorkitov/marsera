@@ -1,0 +1,80 @@
+Testing y = |x| - 4:
+Test 1 pyearth, fit time=0.003s, MAE=7.99e-02
+Test 1: max_terms=3, fit time=0.018s, MAE=9.43e-01 -- failed
+MAE > MAE_pyearth
+
+Test 2 pyearth, fit time=0.002s, MAE=7.99e-02
+Test 2: max_terms=5, fit time=0.036s, MAE=9.11e-01 -- failed
+MAE > MAE_pyearth
+
+Test 3 pyearth, fit time=0.002s, MAE=7.99e-02
+Test 3: max_terms=15, fit time=0.154s, MAE=1.11e-01 -- failed
+MAE > MAE_pyearth
+
+
+Testing y = x - 4:
+Test 1 pyearth, fit time=0.001s, MAE=3.51e-15
+Test 1: max_terms=3, fit time=0.018s, MAE=1.47e-03 -- failed
+MAE > MAE_pyearth
+
+Test 2 pyearth, fit time=0.001s, MAE=3.51e-15
+Test 2: max_terms=5, fit time=0.037s, MAE=3.73e-04 -- failed
+MAE > MAE_pyearth
+
+Test 3 pyearth, fit time=0.001s, MAE=3.51e-15
+Test 3: max_terms=15, fit time=0.153s, MAE=1.12e-04 -- failed
+MAE > MAE_pyearth
+
+
+Testing y = x - 4 + |x + 5| + min(0, -x + 20):
+Test 1 pyearth, fit time=0.003s, MAE=4.23e-01
+Test 1: max_terms=3, fit time=0.023s, MAE=3.52e+00 -- failed
+MAE > MAE_pyearth
+
+Test 2 pyearth, fit time=0.002s, MAE=4.23e-01
+Test 2: max_terms=5, fit time=0.039s, MAE=2.68e+00 -- failed
+MAE > MAE_pyearth
+
+Test 3 pyearth, fit time=0.003s, MAE=4.23e-01
+Test 3: max_terms=11, fit time=0.102s, MAE=4.92e-01 -- failed
+MAE > MAE_pyearth
+
+
+Testing y = x0 - 4 + |x1 + 5| + max(0, x2 + 20) + min(0, -x3) + 10x4:
+Test 1 pyearth, fit time=0.003s, MAE=1.50e+01
+Test 1: max_terms=3, fit time=0.087s, MAE=2.80e+01 -- failed
+MAE > MAE_pyearth
+
+Test 2 pyearth, fit time=0.004s, MAE=1.13e+01
+Test 2: max_terms=5, fit time=0.311s, MAE=2.78e+01 -- failed
+MAE > MAE_pyearth
+
+Test 3 pyearth, fit time=0.007s, MAE=3.24e+00
+Test 3: max_terms=15, fit time=3.967s, MAE=1.83e+01 -- failed
+MAE > MAE_pyearth
+
+Test 4 pyearth, fit time=0.008s, MAE=3.24e+00
+Test 4: max_terms=20, fit time=12.099s, MAE=1.60e+01 -- failed
+MAE > MAE_pyearth
+
+
+Testing y = x0 * (x1 - 10) + 5x2:
+Test 1 pyearth, fit time=0.001s, MAE=4.50e+02
+Test 1: max_terms=1, fit time=0.000s, MAE=4.50e+02 -- passed
+
+Test 2 pyearth, fit time=0.003s, MAE=8.41e-13
+Test 2: max_terms=3, fit time=0.080s, MAE=4.31e+02 -- failed
+MAE > MAE_pyearth
+
+Test 3 pyearth, fit time=0.002s, MAE=8.41e-13
+Test 3: max_terms=5, fit time=0.181s, MAE=3.52e+02 -- failed
+MAE > MAE_pyearth
+
+Test 4 pyearth, fit time=0.002s, MAE=8.41e-13
+Test 4: max_terms=15, fit time=1.973s, MAE=7.00e-02 -- failed
+MAE > MAE_pyearth
+
+Test 5 pyearth, fit time=0.002s, MAE=8.41e-13
+Test 5: max_terms=20, fit time=4.895s, MAE=4.76e-02 -- failed
+MAE > MAE_pyearth
+
