@@ -195,16 +195,19 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         self.feature_importances_ = None
 
 
-        # Нами введённые параметры
+        # Введённые параметры
         ### TODO добавить поддержку не только GCV.
-        ### В частности - поддержку произвольной ф-ции. Для оптимизации использовать численные методы.
+        ### В частности - поддержку произвольной ф-ции. Для оптимизации использовать численные методы. (хотя будет очень не эффективно)
+        # term_list = [B_1, ..., B_M] - список б.ф. (term)
+        # B = [mult_1 , ... , mult_K] - список множителей (mult) б.ф. B
+        self.term_list = None
+        self.coeffs = None
         self.method = 'nelder-mead'    # метод оптимизации
         self.lof_func = self.mse_func  # LOF ф-ция
-        self.lof_value = float('inf')  # зн-ие lof на выученных коэфф-ах
-        # term_list = [B_1, ..., B_M]  - список б.ф. (term)
-        # B = [mult_1 , ... , mult_K] - список множителей (mult) б.ф. B
-        self.term_list = self.TermListClass([[self.ConstantFunc(1.)], ], coeffs=np.array([1.]))
-        self.B = None  # мат. обучающие объекты-б.ф.
+        self.lof_value = float('inf')  # зн-ие LOF на выученных коэфф-ах
+        self.B = None           # мат. объекты-б.ф. для обуч. выборки
+        self.data_count = None  # кол-во данных в обуч. выборке
+        self.data_dim   = None  # размерность данных обуч. выборки
 
 
     ### Множества нужны для verbose, trace и т.д.
@@ -229,35 +232,53 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
     ### TODO Уменьшить кол-во пересчётов матрицы B.
 
     ### Мб можно хранить в более удобном виде?
-    class TermListClass(list):
-        """
-        Класс, реализующий представление мн-ва б.ф. в виде списка б.ф.
-        б.ф. также представляется обёрткой над списком составляющих его множителей.
-        TODO дописать
-        """
-
-        def __init__(self, term_list, coeffs=None):
-            super().__init__(term_list)
-            self.coeffs = coeffs # ассоциированные с б.ф. коэфф-ты
-
-        def __repr__(self):
-            s = ''
-            for coeff_num, term in enumerate(self):
-                for mult in term:
-                    s += '[' + str(mult) + '], '
-                s += f'[coeff={self.coeffs[coeff_num]}] \n'
-            return s
-        
-
     class TermClass(list):
         """
-        Класс, реализующий представление б.ф. в виде списка составляющих его множителей.
+        Класс, реализующий представление б.ф.
+        Обёртка над списком составляющих б.ф. множителей.
         TODO дописать
         """
 
-        def __init__(self, term, coeff):
+        def __init__(self, term, valid_coords):
             super().__init__(term)
-            self.coeff = coeff
+            self.valid_coords = valid_coords # список валидных координат
+
+        def __repr__(self):
+            str = ''
+            for mult in self:
+                str += '[' + str(mult) + '], '
+            return str
+        
+        def add_mult(self, mult):
+            """
+            Метод добавления множителя к базисной ф-ции.
+            Кроме просто добавления в класс-оболочку над списком, происходит удаление
+                уже использованной координаты из мн-ва валидных коорд-т.
+
+
+            Параметры
+            ----------
+            mult: добавляемый множитель
+            """
+            self.append(mult)
+            self.valid_coords.remove(mult.v)
+
+
+    class TermListClass(list):
+        """
+        Класс, реализующий представление мн-ва б.ф.
+        Обёртка над списком б.ф.
+        TODO дописать
+        """
+
+        def __init__(self, term_list):
+            super().__init__(term_list)
+
+        def __repr__(self):
+            str = ''
+            for term_num, term in enumerate(self):
+                str += str(term) + f'coeff={self.coeffs[term_num]}\n'
+            return str
 
     
     def g_calculation(self, B, coeffs):
@@ -275,7 +296,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
         Выход
         ----------
-        вектор, значения ф-ции g(x) на объектах обуч. выборки
+        вектор, значения ф-ции g(x) на объектах выборки
         '''
         g = B @ coeffs
         return g
@@ -288,13 +309,13 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
         Параметры
         ----------
-        X: матрица объектов
-        term: б.ф. B_m
+        X: матрица, выборка
+        term: надстройка над списком, б.ф. B_m
 
         
         Выход
         ----------
-        значения б.ф. B_m
+        вектор, значения б.ф. B_m для всех эл-ов выборки
         '''
         term_values = 1
         for mult in term:
@@ -309,8 +330,8 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
         Параметры
         ----------
-        X: матрица объектов
-        term_list: [B_1, ..., B_M] - список б.ф.
+        X: матрица, выборка
+        term_list: надстройка над списком, [B_1, ..., B_M] - список б.ф.
 
 
         Выход
@@ -409,7 +430,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
         Параметры
         ----------
-        B: матрица объекты-б.ф.
+        B: матрица, объекты-б.ф.
         y: вектор, ответы на объектах
         a: вектор, коэфф-ты при б.ф.
 
@@ -503,7 +524,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
         Выход
         ----------
-        коэфф-ты при б.ф.
+        вектор, коэфф-ты при б.ф.
         """
 
         # V @ a = (L @ L^T) @ a = L @ (L^T @ a) = L @ b = c
@@ -591,11 +612,11 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
         # проверка на симметричность
         if not np.allclose(A, A.T, rtol=self.rtol, atol=self.atol):
-            raise LA.LinAlgError('Asymmetric matrix!')
+            raise LA.LinAlgError('Asymmetric matrix')
 
         # проверка на положительную определённость
         if not np.all(LA.eigvalsh(A) > 0):
-            raise LA.LinAlgError('Matrix is not positive definite!')
+            raise LA.LinAlgError('Matrix is not positive definite')
 
         return A
     
@@ -856,15 +877,35 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
                                    r_minus * (X[:, self.v] - self.t_plus) ** 3)
 
 
+    def classic_knot_optimization(self, X, y, B, fixed_values, **kwargs):
+        """
+        Ф-ция находит лучший узел t при фиксированной б.ф. B_m и координате v.
+        Классический переборный алгоритм.
+
+        Параметры
+        ----------
+        X : матрица, обучающая выборка
+        y : вектор, отклики
+        B : матрица, объекты-б.ф.
+        fixed_values : (m, v) - номер фикс. б.ф. и фикс. координата v
+
+
+        Выход
+        ----------
+        (best_t, best_lof) : лучший порог и значение lof
+        """
+        pass
+
+
     def knot_optimization(self, X, y, B, fixed_values, sorted_features, splines_type='default', **kwargs):
         """
         Ф-ция находит лучший узел t при фиксированной б.ф. B_m и координате v.
 
         Параметры
         ----------
-        X : обучающая выборка
-        y : отлклики
-        B : матрица объекты-б.ф.
+        X : матрица, обучающая выборка
+        y : вектор, отклики
+        B : матрица, объекты-б.ф.
         fixed_values : (m, v) - номер фикс. б.ф. и фикс. координата v
         sorted_features : отсортированный по возрастанию список перебираемых координат
         splines_type :
@@ -913,13 +954,11 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         best_lof = self.lof_func(B_extnd, y, coeffs_extnd, V=V_extnd, b_mean=b_extnd_mean)
         best_t = t
 
-
+    
         # Цикл по порогам от больших к меньшим, t <= u
         u = t
         s_u = 0
         for t in thin_sorted_features[-2::-1]:
-            ### if B(x)>0
-
             between_inds = np.nonzero((t <= x_v) & (x_v < u))[0]
             greater_inds = np.nonzero(x_v >= u)[0]
 
@@ -1117,12 +1156,18 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         #   x = (x_1 , ... , x_d)
         #     d - размерность данных ---> data_dim
 
-        data_count, data_dim = X.shape
-        X_sorted = np.sort(X, axis=0)
-        B = np.ones((data_count, 1))
+        self.data_count, self.data_dim = X.shape
+
+        # Создание первой константной б.ф.
+        const_term = self.TermClass([self.ConstantFunc(1.)], valid_coords=list(range(self.data_dim)))
+        self.term_list = self.TermListClass([const_term, ])
+
+        # Создание матрицы объекты-б.ф., её заполнение для константной б.ф.
+        B = np.ones((self.data_count, 1))
 
         best_lof = None
         term_count = 2  # M <- 2
+
         # создаём б.ф. пока не достигнем макс. кол-ва
         while term_count <= self.max_terms:
             best_lof = float('inf')  # lof* <- +inf
@@ -1133,25 +1178,18 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
             # перебираем уже созданные б.ф.
             for term_num, term in enumerate(self.term_list):
-                # формируем мн-во уже использованных (невалидных) координат
-                ### TODO можно хранить для каждой б.ф. мн-во неиспользованных координат, будет ли ускорение?
-                not_valid_v_list = []
-                for mult in term:
-                    # если это не константная б.ф. B_1
-                    ### TODO сделать соответствующую ф-цию добавления в классе б.ф.
-                    if type(mult) != self.ConstantFunc:
-                        not_valid_v_list.append(mult.v)
-                # формируем мн-во ещё не занятых (валидных) координат
-                valid_v_list = [v for v in range(0, data_dim) if v not in not_valid_v_list]
 
-                # перебираем все ещё не занятые координаты v
-                for v in valid_v_list:
+                # перебираем все ещё не занятые координаты v в б.ф. term
+                for v in term.valid_coords:
                     ### TODO t_plus и t_minus предлагается выбрать как среднее между t и соседними узлами справа и слева
 
-                    # находим лучший порог t и соотв. lof при фикс. б.ф. B_m и координате v
-                    x_sorted = X_sorted[:, v]
+                    # сортируем мн-во порогов, соотв. объекты которых не равны 0 на б.ф. term
+                    x_sorted = np.sort(X[B[:, term_num] != 0, v])
+
+                    # находим лучший порог t и lof при фикс. б.ф. term и координате v
                     fixed_values = (term_num, v)
-                    t, lof = self.knot_optimization(X, y, B, fixed_values, x_sorted)
+                    #t, lof = self.knot_optimization(X, y, B, fixed_values, x_sorted)
+                    t, lof = self.classic_knot_optimization(X, y, B, fixed_values, x_sorted)
 
                     if lof < best_lof:
                         best_lof  = lof
@@ -1165,19 +1203,17 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
             mult_minus = self.ReluFunc(-1, best_v, best_t)
 
             # создаём новые б.ф.
-            term_plus  = list(best_term)  # B_M
-            term_minus = list(best_term)  # B_{M+1}
-            term_plus.append(mult_plus)
-            term_minus.append(mult_minus)
+            term_plus  = self.TermClass(best_term, valid_coords=best_term.valid_coords)  # B_M
+            term_minus = self.TermClass(best_term, valid_coords=best_term.valid_coords)  # B_{M+1}
+            term_plus.add_mult(mult_plus)
+            term_minus.add_mult(mult_minus)
 
-            # добавляем новые б.ф. к уже имеющимся (коэфф-ты при б.ф. добавляются только в самом конце)
+            # добавляем новые б.ф. к уже имеющимся
             ### TODO а если макс. кол-во функций будет равно 3, то что тогда?
             self.term_list.append(term_plus)
             self.term_list.append(term_minus)
 
             # добавляем к матрице B новые столбцы
-            #b_term_plus  = self.b_calculation(X, [term_plus])
-            #b_term_minus = self.b_calculation(X, [term_minus])
             b_term_plus  = (B[:, best_term_num] * np.maximum(+1 * (X[:, best_v] - best_t), 0))[:, np.newaxis]
             b_term_minus = (B[:, best_term_num] * np.maximum(-1 * (X[:, best_v] - best_t), 0))[:, np.newaxis]
             B = np.hstack((B, b_term_plus, b_term_minus))
@@ -1188,7 +1224,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         # Нахождение коэфф-ов построенной модели
         final_coeffs, _ = self.coeffs_and_lof_calculation(B, y, self.term_list, for_X=False, need_lof=False)
         final_lof = best_lof
-        self.term_list.coeffs = final_coeffs
+        self.coeffs = final_coeffs
         self.lof_value = final_lof
         self.B = B
 
@@ -1257,6 +1293,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
                     self.best_lof = lof
                     self.term_list = K
                     self.coeffs = coeffs
+                    
         return self
     
 
