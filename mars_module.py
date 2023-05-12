@@ -1515,5 +1515,77 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         return (self.minspan, self.endspan)
 
 
+class RandomSystem:
+    def __init__(
+        self, n_estimators, feature_subsample_size=None,
+        random_state=None, **earth_parameters
+    ):
+        """
+        n_estimators : int
+            The number of planets in the system.
+
+        max_depth : int
+            The maximum depth of the planet. If None then there is no limits.
+
+        feature_subsample_size : float
+            The size of feature set for each planet. If None then use one-third of all features.
+        """
+        self.n_estimators = n_estimators
+        self.feature_subsample_size = feature_subsample_size
+        self.random_state = random_state
+
+        self.planet_list = []
+        self.feature_subset_list = []
+
+        self.earth_parameters = earth_parameters
+
+    def fit(self, X, y):
+        """
+        X : numpy ndarray
+            Обучающая выборка
+
+        y : numpy ndarray
+            Таргет
+        """
+        np.random.seed(self.random_state)
+
+        self.planet_list = []
+        self.feature_subset_list = []
+
+        if self.feature_subsample_size is None:
+            self.feature_subsample_size = 1 / 3
+
+        for _ in range(self.n_estimators):
+            bag = np.random.choice(X.shape[0], X.shape[0], replace=True)
+            feature = np.random.choice(X.shape[1], int(X.shape[1] * self.feature_subsample_size), replace=False)
+
+            planet = Earth(random_state=self.random_state, **self.earth_parameters)
+            planet.fit(X[bag][:, feature], y[bag])
+
+            self.planet_list.append(planet)
+            self.feature_subset_list.append(feature)
+
+    def predict(self, X):
+        """
+        X : numpy ndarray
+            Выборка
+
+        Returns
+        -------
+        y : numpy ndarray
+            Предсказанный таргет
+        """
+        planet_count = len(self.planet_list)
+        if planet_count == 0:
+            raise RuntimeError('Unable to predict: model isn\'t fitted')
+
+        prediction = np.zeros(X.shape[0])
+
+        for planet, feature_subset in zip(self.planet_list, self.feature_subset_list):
+            prediction += planet.predict(X[:, feature_subset])
+
+        return prediction / planet_count
+
+
 ### ==========================================Для всякого====================================================== 
 ### TODO Проверка на корректность атрибутов с исключениями.
