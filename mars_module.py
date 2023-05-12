@@ -3,6 +3,8 @@ import numpy as np
 import scipy.optimize
 from numpy import linalg as LA
 from sklearn.base import RegressorMixin, BaseEstimator, TransformerMixin
+from sklearn.metrics import mean_squared_error
+from scipy.optimize import minimize_scalar
 
 
 class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
@@ -1522,13 +1524,10 @@ class RandomSystem:
     ):
         """
         n_estimators : int
-            The number of planets in the system.
-
-        max_depth : int
-            The maximum depth of the planet. If None then there is no limits.
+            Количество базовых алгоритмов в системе
 
         feature_subsample_size : float
-            The size of feature set for each planet. If None then use one-third of all features.
+            Размер подпространства в виде доли. Если None, то соответствует 1/3 размера пространства.
         """
         self.n_estimators = n_estimators
         self.feature_subsample_size = feature_subsample_size
@@ -1559,7 +1558,7 @@ class RandomSystem:
             bag = np.random.choice(X.shape[0], X.shape[0], replace=True)
             feature = np.random.choice(X.shape[1], int(X.shape[1] * self.feature_subsample_size), replace=False)
 
-            planet = Earth(random_state=self.random_state, **self.earth_parameters)
+            planet = Earth(**self.earth_parameters)
             planet.fit(X[bag][:, feature], y[bag])
 
             self.planet_list.append(planet)
@@ -1586,6 +1585,86 @@ class RandomSystem:
 
         return prediction / planet_count
 
+class GradientBoostingSystemMSE:
+    def __init__(
+        self, n_estimators, learning_rate=0.1, feature_subsample_size=None,
+        random_state=None, **earth_parameters
+    ):
+        """
+        n_estimators : int
+            Количество базовых алгоритмов в системе
+
+        learning_rate : float
+            Темп обучения
+
+        feature_subsample_size : float
+            Размер подпространства в виде доли. Если None, то соответствует 1/3 размера пространства.
+        """
+        self.n_estimators = n_estimators
+        self.learning_rate = learning_rate
+        self.feature_subsample_size = feature_subsample_size
+        self.random_state = random_state
+
+        self.planet_list = []
+        self.alpha_list = []
+        self.feature_subset_list = []
+
+        self.earth_parameters = earth_parameters
+
+    def fit(self, X, y):
+        """
+        X : numpy ndarray
+            Обучающая выборка
+
+        y : numpy ndarray
+            Таргет
+        """
+        np.random.seed(self.random_state)
+
+        self.planet_list = []
+        self.alpha_list = []
+        self.feature_subset_list = []
+
+        if self.feature_subsample_size is None:
+            self.feature_subsample_size = 1 / 3
+
+        y_pred = np.zeros_like(y)
+
+        for _ in range(self.n_estimators):
+            antigrad = 2 * (y - y_pred)
+            feature = np.random.choice(X.shape[1], int(X.shape[1] * self.feature_subsample_size), replace=False)
+
+            planet = Earth(**self.earth_parameters)
+            planet.fit(X[:, feature], antigrad)
+            planet_pred = planet.predict(X[:, feature])
+
+            alpha = minimize_scalar(lambda x, tp=planet_pred, yp=y_pred: mean_squared_error(y, yp + x * tp)).x
+
+            self.planet_list.append(planet)
+            self.alpha_list.append(alpha)
+            self.feature_subset_list.append(feature)
+
+            y_pred = y_pred + alpha * self.learning_rate * planet_pred
+
+
+    def predict(self, X):
+        """
+        X : numpy ndarray
+            Выборка
+
+        Returns
+        -------
+        y : numpy ndarray
+            Предсказанный таргет
+        """
+        if len(self.planet_list) == 0:
+            raise RuntimeError('Unable to predict: model isn\'t fitted')
+        prediction = np.zeros(X.shape[0])
+
+        for planet, feature_subset, alpha in zip(self.planet_list, self.feature_subset_list, self.alpha_list):
+            prediction += alpha * self.learning_rate * planet.predict(X[:, feature_subset])
+
+        return prediction
 
 ### ==========================================Для всякого====================================================== 
 ### TODO Проверка на корректность атрибутов с исключениями.
