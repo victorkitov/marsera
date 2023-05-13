@@ -1,3 +1,9 @@
+"""
+Модуль реализует функциональность алгоритма машинного обучения MARS (Multivariate Adaptive Regression Splines),
+предложенного Jerome H. Friedman в 1991 г.
+### TODO дописать
+"""
+
 import copy
 import numpy as np
 import scipy.optimize
@@ -162,7 +168,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         self.smooth = smooth
         self.enable_pruning = enable_pruning    # +
         self.feature_importance_type = feature_importance_type
-        self.verbose = verbose
+        self.verbose = verbose ### TODO сделать похожий вывод на pyearth
         self.zero_tol = zero_tol # +
         self.atol = atol         # +
         self.rtol = rtol         # +
@@ -202,12 +208,16 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         # B = [mult_1 , ... , mult_K] - список множителей (mult) б.ф. B
         self.term_list = None
         self.coeffs = None
-        self.method = 'nelder-mead'    # метод оптимизации
-        self.lof_func = self.mse_func  # LOF ф-ция
-        self.lof_value = float('inf')  # зн-ие LOF на выученных коэфф-ах
-        self.B = None           # мат. объекты-б.ф. для обуч. выборки
-        self.data_count = None  # кол-во данных в обуч. выборке
-        self.data_dim   = None  # размерность данных обуч. выборки
+        self.lof_func = self.mse_func
+        self.lof_value = float('inf')
+        self.train_data_count = None
+        self.data_dim = None
+        self.optimization_method = 'nelder-mead'
+
+        # Словари со начениями метрик
+        self.metrics = None
+        self.forward_train_metrics = None
+        self.forward_and_backward_train_metrics = None
 
 
     ### Множества нужны для verbose, trace и т.д.
@@ -239,7 +249,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         TODO дописать
         """
 
-        def __init__(self, term, valid_coords):
+        def __init__(self, term, valid_coords=[]):
             super().__init__(term)
             self.valid_coords = valid_coords # список валидных координат
 
@@ -252,7 +262,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         def add_mult(self, mult):
             """
             Метод добавления множителя к базисной ф-ции.
-            Кроме простого добавления в списком, происходит удаление
+            Кроме простого добавления в список, происходит удаление
                 уже использованной координаты из мн-ва валидных коорд-т.
 
 
@@ -271,14 +281,14 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         TODO дописать
         """
 
-        def __init__(self, earth_instance, term_list):
+        def __init__(self, term_list, coeffs=None):
             super().__init__(term_list)
-            self.earth_instance = earth_instance
+            self.coeffs = coeffs
 
         def __repr__(self):
             s = ''
             for term_num, term in enumerate(self):
-                s += str(term) + f'coeff={self.earth_instance.coeffs[term_num]}\n'
+                s += str(term) + f'coeff={self.coeffs[term_num]}\n'
             return s
 
     
@@ -326,8 +336,10 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
     def b_calculation(self, X, term_list):
         '''
-        Ф-ция, реализующая вычисление матрицы B:
+        Ф-ция, реализующая вычисление матрицы B размера NxM:
             B[i,m] = B_m(x_i)
+            N - кол-во объектов
+            M - кол-во б.ф.
 
         Параметры
         ----------
@@ -348,7 +360,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         return B
 
 
-    def c_calculation(self, V, B, b_mean=None):
+    def c_calculation(self, V_norm, B, b_mean=0.):
         '''
         Ф-ция, вычисляющая поправочный коэффициент C_correct(M).
             C(M) = trace(B @ (B.T @ B)^(-1) @ B.T) + 1
@@ -360,10 +372,8 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         Параметры
         ----------
         B: матрица, объекты-б.ф.
-        V: матрица, скорректированная симм. полож. опред. V = B.T @ B
-        b_mean: вектор, среднее по объектам мат. B (по умолчанию = None)
-            Выполняется ли нормализация мат. B (по умолчанию соотв-т нет)?
-            Если не None, то считается, что матрица V уже учитывает нормирование мат. B.
+        V_norm: матрица, скорректированная симм. полож. опред. V_norm = B.T @ (B - b_mean)
+        b_mean: вектор, среднее по объектам мат. B (по умолчанию = 0)
 
 
         Выход
@@ -373,26 +383,41 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         if self.penalty == None:
             self.penalty = 3
 
-        # если b_mean != None => в V уже использована нормализованная мат. B (V = B^T @ (B - B_mean)) =>
-        # => мат. B, которая используется в формуле для C(M), также должна быть нормализована и только она
+        # Т.к. в V уже использована нормализованная мат. B (V = B^T @ (B - b_mean)) =>
+        #   мат. B, которая используется в формуле для C(M), также должна быть нормирована
+        #   и только она (т.е. B.T без изменений)
         
         term_count = B.shape[1]
+        B_norm = B - b_mean
 
-        if b_mean == None:
-            B_mod = B
-        else:
-            B_mod = B - b_mean
-
-        C = np.trace(B_mod @ LA.inv(V) @ B.T) + 1
+        C = np.trace(B_norm @ LA.inv(V_norm) @ B.T) + 1
         C_correct = C + self.penalty * term_count
         return C_correct
+    
+
+    def metrics_calculation(self, y, B, coeffs, **kwargs):
+        """
+        Ф-ция, вычисляющая значения метрик inplace.
+
+        Параметры
+        ----------
+        y: вектор, ответы на объектах
+        B: матрица, объекты-б.ф.
+        coeffs: вектор, коэфф-ты при б.ф.
+
+
+        Выход
+        ----------
+        None
+        """
+        for name_metric in self.
     
 
     def minspan_endspan_calculation(self, nonzero_count, data_dim):
         '''
         Ф-ция, вычисляющая L(alpha) и Le(alpha):
-            L(alpha)  - задаёт шаг из порогов между соседними узлами
-            Le(alpha) - задаёт отступ из порогов для граничных узлов 
+            L(alpha)  - задаёт шаг из порогов между соседними узлами (t)
+            Le(alpha) - задаёт отступ из порогов для граничных узлов
         Смысл - сглаживание скользящим окном.
             
         Параметры
@@ -426,7 +451,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         return (minspan, endspan)
 
 
-    def mse_func(self, B, y, coeffs, **kwargs):
+    def mse_func(self, y, B, coeffs, **kwargs):
         """
         Mean Squared Error (MSE):
             MSE = 1/N * sum([y_i - f(x_i)]^2)
@@ -434,8 +459,8 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
         Параметры
         ----------
-        B: матрица, объекты-б.ф.
         y: вектор, ответы на объектах
+        B: матрица, объекты-б.ф.
         coeffs: вектор, коэфф-ты при б.ф.
 
 
@@ -446,14 +471,82 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         y_pred = self.g_calculation(B, coeffs)
         mse = np.mean((y - y_pred) ** 2)
         return mse
+    
+
+    def rss_func(self, y, B, coeffs, **kwargs):
+        """
+        Residual Sum of Squares (RSS):
+           RSS = sum([y_i - f(x_i)]^2)
+           f(x) = g(x) = B @ a
+
+        Параметры
+        ----------
+        y: вектор, ответы на объектах
+        B: матрица, объекты-б.ф.
+        coeffs: вектор, коэфф-ты при б.ф.
+
+
+        Выход
+        ----------
+        float, значение RSS
+        """
+        y_pred = self.g_calculation(B, coeffs)
+        rss = np.sum((y - y_pred) ** 2)
+        return rss
+    
+
+    def rsq_func(self, y, B, coeffs, **kwargs):
+        """
+        TODO дописать
+        R SQuared (RSQ):
+           RSQ = 
+           f(x) = g(x) = B @ a
+
+        Параметры
+        ----------
+        y: вектор, ответы на объектах
+        B: матрица, объекты-б.ф.
+        coeffs: вектор, коэфф-ты при б.ф.
+
+
+        Выход
+        ----------
+        float, значение RSQ
+        """
+        y_pred = self.g_calculation(B, coeffs)
+        rsq = None
+        return rsq
+    
+
+    def grsq_func(self, y, B, coeffs, **kwargs):
+        """
+        TODO дописать
+        General R SQuared (GRSQ):
+           GRSQ = 
+           f(x) = g(x) = B @ a
+
+        Параметры
+        ----------
+        y: вектор, ответы на объектах
+        B: матрица, объекты-б.ф.
+        coeffs: вектор, коэфф-ты при б.ф.
+
+
+        Выход
+        ----------
+        float, значение GRSQ
+        """
+        y_pred = self.g_calculation(B, coeffs)
+        grsq = None
+        return grsq
         
 
-    def gcv_func(self, B, y, coeffs, V, b_mean=None):
+    def gcv_func(self, y, B, coeffs, V_norm, b_mean=0., **kwargs):
         '''
         TODO реализовать в виде класса
         Generalized Cross-Validation criterion (GCV):
             GCV(M) = 1/N * sum([y_i - f(x_i)]^2) / [1 - C_correct(M)/N]^2 <=>
-            GCV(M) = MSE / [1 - C_correct(M)/N]^2
+            GCV(M) = MSE / const_correct(M)
             C_correct(M) = C(M) + d*M
             C(M) = trace(B @ (B.T @ B)^(-1) @ B.T) + 1
             f(x) = g(x) = B @ a
@@ -462,32 +555,23 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         
         Параметры
         ----------
-        B: матрица, объекты-б.ф.
         y: вектор, ответы на объектах
+        B: матрица, объекты-б.ф.
         coeffs: вектор, коэфф-ты при б.ф.
-        V: матрица, скорректированная симм. полож. опред. V = B.T @ B
-            (обязательный параметр)
-        b_mean: вектор, усреднённая по объектам мат. B (по умолчанию = None)
-            Выполняется ли нормализация мат. B (по умолчанию соотв. нет)?
-            Если не None, то считается, что матрица V уже учитывает нормирование мат. B.
+        V_norm: матрица, скорректированная симм. полож. опред. V_norm = B.T @ (B - b_mean)
+        b_mean: вектор, усреднённая по объектам мат. B (по умолчанию = 0)
 
 
         Выход
         ----------
         float, значение GCV
         '''
+        ### TODO исправить с учётом передачи усреднённых значений
         data_count = y.size
         mse = self.mse_func(B, y, coeffs)
-        C = self.c_calculation(V, B, b_mean=b_mean)
+        C = self.c_calculation(V_norm, B, b_mean=b_mean)
         gcv = mse / (1 - C / data_count)**2
         return gcv
-    
-
-    def rss_func(self, ):
-        """
-        
-        """
-        pass
 
 
     def minimize(self, f, x0, args, method='nelder-mead', options={'disp': True}):
@@ -496,7 +580,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
         Параметры
         ----------
-        ### TODO посмотреть другие параметры, 
+        ### TODO посмотреть другие параметры
         f: минимизируемая ф-ция вида f(x, *args) -> float
         x0: начальное приближение
         args: доп. аргументы ф-ции f
@@ -514,7 +598,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
     def analytically_pseudo_solves_slae(self, V, c):
         """
         Ф-ция, аналитически вычисляющая псевдорешение СЛАУ
-          методом наименьших квадратов с применением метода Холецкого.
+          методом наименьших квадратов на основе метода Холецкого.
         Используется для нахождения коэфф-ов.
         V @ a = c, V = L @ L^T
             V - матрица, скорректированная симм. полож. опред.
@@ -532,10 +616,9 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         ----------
         вектор, коэфф-ты при б.ф.
         """
-
         # V @ a = (L @ L^T) @ a = L @ (L^T @ a) = L @ b = c
         #   b = L^T @ a
-        
+
         # Разложение методом Холецкого
         #L = self.modified_cholesky(V, c, L)
         L = LA.cholesky(V)
@@ -583,7 +666,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
         lof = None
         if need_lof:
-            lof = self.lof_func(B, y, coeffs, V=V)
+            lof = self.lof_func(y, B, coeffs, V=V)
 
         return (coeffs, lof)
     
@@ -593,7 +676,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         Ф-ция, корректирующая потенциально симметричную положительно определённую матрицу,
           добавляя к ней диагональную матрицу, определяемую атрибутами точности: atol, rtol и zero_tol.
         Далее происходит проверка достижения желаемого рез-та.
-        В противном случае выбрасывается исключение.
+        В противном случае выбрасывается исключение и рекомендуется уменьшить точность.
         
         Параметры
         ----------
@@ -627,14 +710,14 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         return A
     
 
-    def modified_cholesky(self, V, L):
+    def modified_cholesky(self, V, L_prev):
         """
-        Ф-ция, реализующая разложение Холецкого с частичным пересчётом элементов выходной матрицы L.
+        Ф-ция, реализующая разложение Холецкого с частичным пересчётом элементов диагональной матрицы L.
 
         Параметры
         ----------
         V: матрица, симм. полож. опред.
-        L: матрица, треуг. с прошлой итерации
+        L_prev: матрица, треуг. с прошлой итерации
 
 
         Выход
@@ -720,7 +803,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
             ----------
             X: матрица, выборка
             '''
-            indicator = self.s * ((X[:, self.v] - self.t) > 0.)
+            indicator = ((self.s * (X[:, self.v] - self.t)) > 0.) * 1.
             return indicator
 
 
@@ -884,16 +967,17 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
         Параметры
         ----------
-        X : матрица, обучающая выборка
-        y : вектор, ответы на объектах
-        B : матрица, объекты-б.ф.
-        fixed_values : (m - int, v - int) - фикс. параметры: номер фикс. б.ф. и номер фикс. коор-ты v
+        X: матрица, обучающая выборка
+        y: вектор, ответы на объектах
+        B: матрица, объекты-б.ф.
+        fixed_values: (m - int, v - int) - фикс. параметры: номер фикс. б.ф. и номер фикс. коор-ты v
 
 
         Выход
         ----------
-        (best_t, best_lof) : (float, float), лучший порог t и лучшее значение lof при фикс. параметрах
+        (best_t, best_lof): (float, float), лучший порог t и лучшее значение lof при фикс. параметрах
         """
+        ### TODO дописать
         pass
 
 
@@ -903,17 +987,17 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
         Параметры
         ----------
-        X : матрица, обучающая выборка
-        y : вектор, ответы на объектах
-        B : матрица, объекты-б.ф.
-        fixed_values : (m - int, v - int) - фикс. параметры: номер фикс. б.ф. и номер фикс. коор-ты v
-        sorted_features : вектор, зн-я объектов по фикс. коорд. отсортированные по возрастанию
-        splines_type :
+        X: матрица, обучающая выборка
+        y: вектор, ответы на объектах
+        B: матрица, объекты-б.ф.
+        fixed_values: (m - int, v - int) - фикс. параметры: номер фикс. б.ф. и номер фикс. коор-ты v
+        sorted_features: вектор, ненулевые зн-я объектов по фикс. коорд., отсортированные по возрастанию
+        splines_type: ...
 
 
         Выход
         ----------
-        (best_t, best_lof) : (float, float), лучший порог t и лучшее значение lof при фикс. параметрах
+        (best_t, best_lof): (float, float), лучший порог t и лучшее значение lof при фикс. параметрах
         """
         N, d = X.shape # N - кол-во объектов, d - размерность объектов
         m, v = fixed_values
@@ -927,7 +1011,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
         # Заполняем последние 2 столбца матрицы B_extnd 2-мя последними слагаемыми из g' (они не б.ф.)
         B_extnd[:, -2] = B_m * x_v  # B_m(x) * x[v]
-        B_extnd[:, -1] = 0          # B_m(x) * [x[v] - t]_+ == 0 (t - самый крайний порог)
+        B_extnd[:, -1] = 0          # B_m(x) * [x[v] - t]_+ == 0 (t - самый крайний правый порог)
         
 
         # Прореживание мн-ва перебираемых порогов
@@ -940,8 +1024,8 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
 
         # Нормализация:
-        #   B @ a = y <=> {нормализация} <=> (B - B_mean) @ a = y - y_mean --->
-        #   ---> {B.T @ (...)} ---> [B.T @ (B - B_mean)] @ a = B.T @ (y - y_mean) <=>
+        #   B @ a = y => {нормализация} => (B - b_mean) @ a = y - y_mean --->
+        #   ---> {B.T @ (...)} ---> [B.T @ (B - b_mean)] @ a = B.T @ (y - y_mean) <=>
         #   <=> V @ a = c
         y_mean = np.mean(y)
         b_extnd_mean = np.mean(B_extnd, axis=0)
@@ -950,9 +1034,10 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         c_extnd = B_extnd.T @ (y - y_mean)
 
 
+        # Находим коэфф-ты - решение нормализованной задачи V @ a = c
         coeffs_extnd = self.analytically_pseudo_solves_slae(V_extnd, c_extnd)
 
-        best_lof = self.lof_func(B_extnd, y, coeffs_extnd, V=V_extnd, b_mean=b_extnd_mean)
+        best_lof = self.lof_func(y - y_mean, B_extnd - b_extnd_mean, coeffs_extnd, V=V_extnd, b_mean=b_extnd_mean)
         best_t = t
 
     
@@ -963,7 +1048,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
             between_inds = np.nonzero((t <= x_v) & (x_v < u))[0]
             greater_inds = np.nonzero(x_v >= u)[0]
 
-            # Обновляем последнее слагаемое в g', которое только одно зав-т от порога t
+            # Обновляем последнее слагаемое в g', которое одно зав-т от порога t
             B_extnd[:, -1] = B_m * np.maximum(x_v - t, 0)  # B_m(x) * [x[v] - t]_+
             b_extnd_mean[-1] = np.mean(B_extnd[:, -1])
 
@@ -992,14 +1077,16 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
             V_extnd = self.symmetric_positive_matrix_correct(V_extnd)
 
-            # Находим коэфф-ты.
+            # Находим коэфф-ты - решение нормализованной задачи V @ a = c
             # Они отвечают ф-ции g' и отличаются от оптимальных для набора б.ф.
             # При этом зн-я lof* моделей g и g' на своих оптимальных наборах коэфф-тов совпадают =>
             #   => совпадают оптимальные пороги t*
             coeffs_extnd = self.analytically_pseudo_solves_slae(V_extnd, c_extnd)
 
             # Находим lof*
-            lof = self.lof_func(B_extnd, y, coeffs_extnd, V=V_extnd, b_mean=b_extnd_mean)
+            ### Раньше передавал коэфф-ты нормализованной задачи в НЕ нормализаованную, а это, оказывается, не экв-но:
+            ###   lof = self.lof_func(y, B_extnd, coeffs_extnd, V=V_extnd, b_mean=b_extnd_mean)
+            lof = self.lof_func(y - y_mean, B_extnd - b_extnd_mean, coeffs_extnd, V=V_extnd, b_mean=b_extnd_mean)
 
             if lof < best_lof:
                 best_lof = lof
@@ -1043,11 +1130,11 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         Параметры
         ----------
         X : array-like, shape = [m, n], где m - кол-во объектов, n - кол-во признаков
-            Обучающие данные.
+            Обучающая выборка.
 
 
         y : array-like, optional (default=None), shape = [m, p], где m - кол-во объектов, p - кол-во разных выходов
-            Ответы на обучающих данных.
+            Ответы на объектах.
 
 
         sample_weight : array-like, optional (default=None), shape = [m], где m - кол-во объектов
@@ -1072,17 +1159,17 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         """
         ### TODO Дописать + реализовать вывод доп. инф-ции.
         self.forward_pass(X, y,
-                          sample_weight,
-                          output_weight,
-                          missing,
-                          xlabels,
-                          linvars)
+                          sample_weight=sample_weight,
+                          output_weight=output_weight,
+                          missing=missing,
+                          xlabels=xlabels,
+                          linvars=linvars)
 
         if self.enable_pruning:
             self.pruning_pass(X, y,
-                              sample_weight,
-                              output_weight,
-                              missing)
+                              sample_weight=sample_weight,
+                              output_weight=output_weight,
+                              missing=missing)
             
         return self
         
@@ -1102,11 +1189,11 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         Параметры
         ----------
         X : array-like, shape = [m, n], где m - кол-во объектов, n - кол-во признаков
-            Обучающие данные.
+            Обучающая выборка.
 
 
         y : array-like, optional (default=None), shape = [m, p], где m - кол-во объектов, p - кол-во разных выходов
-            Ответы на обучающих данных.
+            Ответы на объектах.
 
 
         sample_weight : array-like, optional (default=None), shape = [m], где m - кол-во объектов
@@ -1135,9 +1222,9 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         # Обозначения из оригинальной статьи:
         # g(x) - модель:
         #   g(x) = a_1 * B_1(x) + ... + a_M * B_M(x)
-        #     x = (x_1 , ... , x_d) - объект
+        #     x = (x_1 , ... , x_d) - объект из обуч. выборки
         #       N - кол-во объектов ---> data_count
-        #       d - размерность данных ---> data_dim
+        #       d - размерность объекта ---> data_dim
         #     B_i - i-ая б.ф. ---> term
         #     M - кол-во б.ф. ---> term_count
         #     a_i - коэф-т при i-ой б.ф.
@@ -1158,14 +1245,14 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         #         v - координата x множителя
         #         t - порог множителя
 
-        self.data_count, self.data_dim = X.shape
+        self.train_data_count, self.data_dim = X.shape
 
         # Создание первой константной б.ф.
         const_term = self.TermClass([self.ConstantFunc(1.)], valid_coords=list(range(self.data_dim)))
-        self.term_list = self.TermListClass(self, [const_term, ])
+        self.term_list = self.TermListClass([const_term, ])
 
         # Создание матрицы объекты-б.ф., её заполнение для константной б.ф.
-        B = np.ones((self.data_count, 1))
+        B = np.ones((self.train_data_count, 1))
 
         best_lof = None
         term_count = 2  # M <- 2
@@ -1187,7 +1274,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
                     # сортируем мн-во порогов, соотв. объекты которых не равны 0 на б.ф. term
                     x_sorted = np.sort(X[B[:, term_num] != 0, v])
 
-                    # находим лучший порог t и lof при фикс. б.ф. term и координате v
+                    # находим лучший порог t и значение lof при фикс. б.ф. term и координате v
                     fixed_values = (term_num, v)
                     t, lof = self.knot_optimization(X, y, B, fixed_values, x_sorted)
                     #t, lof = self.classic_knot_optimization(X, y, B, fixed_values, x_sorted)
@@ -1204,8 +1291,8 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
             mult_minus = self.ReluFunc(-1, best_v, best_t)
 
             # создаём новые б.ф.
-            term_plus  = self.TermClass(best_term, valid_coords=copy.copy(best_term.valid_coords))  # B_M
-            term_minus = self.TermClass(best_term, valid_coords=copy.copy(best_term.valid_coords))  # B_{M+1}
+            term_plus  = copy.deepcopy(best_term)  # B_M
+            term_minus = copy.deepcopy(best_term)  # B_{M+1}
             term_plus.add_mult(mult_plus)
             term_minus.add_mult(mult_minus)
 
@@ -1223,9 +1310,9 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
 
         # Нахождение коэфф-ов построенной модели
-        self.coeffs, _ = self.coeffs_and_lof_calculation(B, y, self.term_list, for_X=False, need_lof=False)
-        self.lof_value = best_lof
-        self.B = B
+        self.term_list.coeffs, self.train_lof_value = self.coeffs_and_lof_calculation(B, y, self.term_list, for_X=False)
+        self.coeffs = self.term_list.coeffs
+        self.
 
         return self
 
@@ -1243,11 +1330,11 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         Параметры
         ----------
         X : array-like, shape = [m, n], где m - кол-во объектов, n - кол-во признаков
-            Обучающие данные.
+            Обучающая выборка.
 
 
         y : array-like, optional (default=None), shape = [m, p], где m - кол-во объектов, p - кол-во разных выходов
-            Ответы на обучающих данных.
+            Ответы на объектах.
 
 
         sample_weight : array-like, optional (default=None), shape = [m], где m - кол-во объектов
@@ -1281,7 +1368,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
                 # находим оптимальные коэфф-ты, считаем lof без очередной б.ф.
                 B = self.b_calculation(X, K)
                 coeffs = self.analytically_pseudo_solves_slae(B, y)
-                lof = self.lof_func(B, y, coeffs)
+                lof = self.lof_func(y, B, coeffs)
 
                 if lof < b:
                     # локальное улучшение
@@ -1308,11 +1395,11 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         Параметры
         ----------
         X : array-like, shape = [m, n], где m - кол-во объектов, n - кол-во признаков
-            Обучающие данные.
+            Обучающая выборка.
 
 
         y : array-like, optional (default=None), shape = [m, p], где m - кол-во объектов, p - кол-во выходов
-            Ответы на обучающих данных.
+            Ответы на объектах.
 
 
         sample_weight : array-like, optional (default=None), shape = [m], где m - кол-во объектов
@@ -1322,6 +1409,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         output_weight : array-like, optional (default=None), shape = [p], где p - кол-во выходов
             Взвешивание всех ответов модели для каждого из выходовов после обучения.
         """
+        ### TODO реализовать
         pass
 
 
@@ -1387,11 +1475,37 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
             skip_scrub=False):
         """
         Вычисляет обобщённый коэффициент детерминации (R-squared).
-        (Чем больше, тем лучше)
+        Чем он больше, тем лучше.
 
         Параметры
         ----------
-        ### Заполняется аналогично fit.
+        X : array-like, shape = [m, n], где m - кол-во объектов, n - кол-во признаков
+            Обучающая выборка.
+
+
+        y : array-like, optional (default=None), shape = [m, p], где m - кол-во объектов, p - кол-во разных выходов
+            Ответы на объектах.
+
+
+        sample_weight : array-like, optional (default=None), shape = [m], где m - кол-во объектов
+            Пообъектное взвешивание. Веса >= 0. Полезно при несбалансированных дисперсиях распределений над объектами.
+
+
+        output_weight : array-like, optional (default=None), shape = [p], где p - кол-во выходов
+            Взвешивание всех ответов модели для каждого из выходовов после обучения.
+
+
+        ### Пока игнорируем
+        missing : array-like, shape = [m, n], где m - кол-во объектов, n - кол-во признаков.
+            ...
+
+
+        linvars : iterable of strings or ints, optional (empty by default)
+            Перечисление тех признаков (по номерам или именам), которые могут входить в базисные функции только линейно.
+
+
+        xlabels : iterable of strings , optional (empty by default)
+           Явное задание имён признаков (столбцов). Кол-во имён должно быть равно кол-ву признаков.
 
 
         Выход
@@ -1399,22 +1513,49 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         score : float (максимум 1, мб отрицательным).
             Обобщённый коэффициент детерминации.
         """
+        ### TODO реализовать
         pass
 
 
     def score_samples(self, X, y=None, missing=None):
         """
-        ### Не очень понял что это надо разобраться,.
+        ### TODO Не очень понял что это надо разобраться.
 
         Параметры
         ----------
-        ### Заполняется аналогично fit.
+        X : array-like, shape = [m, n], где m - кол-во объектов, n - кол-во признаков
+            Обучающая выборка.
+
+
+        y : array-like, optional (default=None), shape = [m, p], где m - кол-во объектов, p - кол-во разных выходов
+            Ответы на объектах.
+
+
+        sample_weight : array-like, optional (default=None), shape = [m], где m - кол-во объектов
+            Пообъектное взвешивание. Веса >= 0. Полезно при несбалансированных дисперсиях распределений над объектами.
+
+
+        output_weight : array-like, optional (default=None), shape = [p], где p - кол-во выходов
+            Взвешивание всех ответов модели для каждого из выходовов после обучения.
+
+
+        ### Пока игнорируем
+        missing : array-like, shape = [m, n], где m - кол-во объектов, n - кол-во признаков.
+            ...
+
+
+        linvars : iterable of strings or ints, optional (empty by default)
+            Перечисление тех признаков (по номерам или именам), которые могут входить в базисные функции только линейно.
+
+
+        xlabels : iterable of strings , optional (empty by default)
+           Явное задание имён признаков (столбцов). Кол-во имён должно быть равно кол-ву признаков.
 
 
         Выход
         ----------
         scores : array of shape=[m, p] of floats (максимум 1, мб отрицательным).
-            ### 
+            ...
         """
         pass
 
@@ -1459,6 +1600,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         '''
         Вывод информации о проходе вперёд.
         '''
+        ### TODO реализовать
         pass
 
 
@@ -1466,6 +1608,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         '''
         Вывод информации о проходе назад.
         '''
+        ### TODO реализовать
         pass
 
 
@@ -1481,6 +1624,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         """
         Описание модели в виде строки.
         """
+        ### TODO дописать
         return self.term_list
 
 
@@ -1499,7 +1643,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
     def get_penalty(self):
         """
-        Возвращает параметр сглаживания d.
+        Возвращает параметр сглаживания d, который используется в:
             C_correct(M) = C(M) + d*M.
         """
         return self.penalty
@@ -1507,7 +1651,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
     def get_minspan_endspan(self):
         """
-        Возвращает L(alpha) и Le(alpha):
+        Возвращает L(alpha) и Le(alpha), т.ч.:
             L(alpha)  - задаёт шаг из порогов между соседними узлами
             Le(alpha) - задаёт отступ из порогов для граничных узлов
         Смысл: сглаживание скользящим окном.
