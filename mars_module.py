@@ -172,7 +172,6 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         self.zero_tol = zero_tol # +
         self.atol = atol         # +
         self.rtol = rtol         # +
-        ### Пока не реализуем
         self.allow_missing = allow_missing
         self.use_fast = use_fast
         self.fast_K = fast_K
@@ -187,9 +186,9 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
             self.endspan = -1
 
 
-        # Такие параметры есть в pyearth. Некоторые введены уже нами.
-        self.coef_ = None
-        self.basis_ = None
+        # Информационные атрибуты. Некоторые специально для обратной совместимости с pyearth
+        self.coef_ = None  # + 
+        self.basis_ = None  # +
         self.mse_ = None
         self.mae_ = None
         self.rsq_ = None
@@ -202,34 +201,36 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         self.allow_missing_ = None
         self.feature_importances_ = None
 
+        self.term_list_forward_ = None
+        self.term_list_backward_ = None  # +
+        self.coeffs_forward_ = None
+        self.coeffs_backward_ = None  # +
+        self.lof_value_forward_ = float('inf')
+        self.lof_value_backward_ = float('inf')  # +
+        self.lof_value_predict_ = float('inf')
+        self.metrics2value_forward_ = None
+        self.metrics2value_backward_ = None
+        self.metrics2value_predict_ = None
 
         # Введённые параметры
-        ### TODO добавить поддержку не только GCV.
-        ### В частности - поддержку произвольной ф-ции. Для оптимизации использовать численные методы. (хотя будет очень не эффективно)
         # term_list = [B_1, ..., B_M] - список б.ф. (term)
         # B = [mult_1 , ... , mult_K] - список множителей (mult) б.ф. B
         self.term_list = None
         self.coeffs = None
         self.lof_func = self.mse_func
-        self.predict_lof_value = float('inf')
-        self.forward_lof_value = float('inf')
-        self.forward_and_backward_lof_value = float('inf')
+        self.lof_value = float('inf')
         self.train_data_count = None
         self.data_dim = None
         self.optimization_method = 'nelder-mead'
-
-        # Словари со начениями метрик
+        self.metrics2value = None
         self.metrics2func = {
             'MSE': self.mse_func,
             'MAE': self.mae_func,
-            'RSS': self.rss_func,
-            'RSQ': self.rsq_func,
-            'GRSQ': self.grsq_func,
+            #'RSS': self.rss_func, TODO
+            #'RSQ': self.rsq_func,
+            #'GRSQ': self.grsq_func,
             #'GCV': self.gcv_func,
             }
-        self.predict_metrics = None # зн-я метрик после вызова ф-ции predict()
-        self.metrics2value_forward = None # зн-я метрик после прохода вперёд
-        self.metrics2value_forward_and_backward = None # зн-я метрик после прохода вперёд и назад
 
 
     ### Множества нужны для verbose, trace и т.д.
@@ -1057,7 +1058,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         # Прореживание мн-ва перебираемых порогов
         N_m = np.count_nonzero(B_m)
         minspan, endspan = self.minspan_endspan_calculation(N_m, d)
-        thin_sorted_features = sorted_features#[endspan:-endspan:minspan]
+        thin_sorted_features = sorted_features[endspan:-endspan:minspan]
         if thin_sorted_features.size == 0:
             return (None, float('inf'))
         t = thin_sorted_features[-1]
@@ -1350,9 +1351,18 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
 
         # Нахождение коэфф-ов модели, построенной на шаге вперёд
-        self.coeffs, self.forward_lof_value = self.coeffs_and_lof_calculation(B, y, self.term_list, for_X=False)
+        self.coeffs, self.lof_value = self.coeffs_and_lof_calculation(B, y, self.term_list, for_X=False)
         self.term_list.coeffs = self.coeffs
-        self.metrics2value_forward = self.metrics_calculation(y, B, self.coeffs, self.metrics2func)
+        self.metrics2value = self.metrics_calculation(y, B, self.coeffs, self.metrics2func)
+
+
+        # Заполняем информационные атрибуты для прохода назад
+        self.coef_ = self.coeffs
+        self.basis_ = self.term_list
+        self.term_list_forward_ = self.term_list
+        self.lof_value_forward_ = self.lof_value
+        self.coeffs_forward_ = self.coeffs
+        self.metrics2value_forward_ = self.metrics2value
 
         return self
 
@@ -1391,34 +1401,56 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
         ### Что такое skip_scrub?
         """
-        term_count = len(self.term_list)
-
         # названия переменных взяты из статьи
-        best_K = list(self.term_list) # лучший локальный набор определённого кол-ва б.ф.
-        for M in range(term_count, 1, -1): # M, M-1, ..., 2
-            b = float('inf')
-            L = list(best_K)
+        M_max = len(self.term_list)
+
+        best_J = copy.deepcopy(self.term_list)  # глобально лучший набор б.ф.
+        best_K = copy.deepcopy(best_J)  # локально лучший набор б.ф.
+        best_lof = self.lof_value  # глобально лучшее значение LOF
+        best_coeffs = self.coeffs
+
+        for M in range(M_max, 1, -1): # M_max, M_max-1, ..., 2
+            b = float('inf')  # локально лучшее значение LOF
+            L = copy.deepcopy(best_K)
 
             # для очередного прореженного списка поочерёдно удаляем входящие в него б.ф.
             #   для определения кандидата на удаление
             for m in range(1, M):
-                K = list(L)
+                K = copy.deepcopy(L)
                 K.pop(m)
 
                 # находим оптимальные коэфф-ты, считаем lof без очередной б.ф.
-                B = self.b_calculation(X, K)
-                coeffs = self.analytically_pseudo_solves_slae(B, y)
-                lof = self.lof_func(y, B, coeffs)
+                coeffs, lof = self.coeffs_and_lof_calculation(X, y, K)
 
                 if lof < b:
                     # локальное улучшение
                     b = lof
                     best_K = K
-                if lof <= self.best_lof:
+
+                if lof <= best_lof:
                     # глобальное улучшение
-                    self.best_lof = lof
-                    self.term_list = K
-                    self.coeffs = coeffs
+                    best_J = K
+                    best_lof = lof
+                    best_coeffs = coeffs
+
+
+        self.term_list = best_J
+        self.lof_value = best_lof
+        self.coeffs = best_coeffs
+        self.term_list.coeffs = self.coeffs
+
+        B = self.b_calculation(X, self.term_list)
+        self.metrics2value = self.metrics_calculation(y, B, self.coeffs, self.metrics2func)
+
+
+        # Заполняем информационные атрибуты для прохода назад
+        self.coef_ = self.coeffs
+        self.basis_ = self.term_list
+        self.term_list_backward_ = self.term_list
+        self.lof_value_backward_ = self.lof_value
+        self.coeffs_backward_ = self.coeffs
+        self.metrics2value_backward_ = self.metrics2value
+        
                     
         return self
     
