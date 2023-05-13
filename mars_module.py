@@ -1316,7 +1316,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
             term_count += 2  # M <- M + 2
 
             # блок с применением dropout'a
-            if (term_num > self.max_terms and is_dropped
+            if (term_count > self.max_terms and is_dropped
                 and 0. <= self.dropout <= 1.):
                 is_dropped = False
 
@@ -1330,7 +1330,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
                 mask = (mask == 0)
                 B = B[:, mask]
                 term_count -= np.sum(~mask)
-                self.term_list = self.TermListClass(compress(self.term_list, mask))
+                self.term_list = self.TermListClass(self, compress(self.term_list, mask))
 
 
         # Нахождение коэфф-ов построенной модели
