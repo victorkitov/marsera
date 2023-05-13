@@ -172,6 +172,12 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         self.zero_tol = zero_tol # +
         self.atol = atol         # +
         self.rtol = rtol         # +
+        ### Пока не реализуем
+        self.allow_missing = allow_missing
+        self.use_fast = use_fast
+        self.fast_K = fast_K
+        self.fast_h = fast_h
+        self.check_every = check_every
 
 
         if self.minspan == None:
@@ -180,19 +186,15 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         if self.endspan == None:
             self.endspan = -1
 
-        ### Пока не реализуем
-        self.allow_missing = allow_missing
-        self.use_fast = use_fast
-        self.fast_K = fast_K
-        self.fast_h = fast_h
-        self.check_every = check_every
 
-        ### Из py-earth вычисляемые аттрибуты
+        # Такие параметры есть в pyearth. Некоторые введены уже нами.
         self.coef_ = None
         self.basis_ = None
-        self.mse_  = None
-        self.rsq_  = None
-        self.gcv_  = None
+        self.mse_ = None
+        self.mae_ = None
+        self.rsq_ = None
+        self.rss_ = None
+        self.gcv_ = None
         self.grsq_ = None
         self.forward_pass_record_ = None
         self.pruning_pass_record_ = None
@@ -209,15 +211,25 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         self.term_list = None
         self.coeffs = None
         self.lof_func = self.mse_func
-        self.lof_value = float('inf')
+        self.predict_lof_value = float('inf')
+        self.forward_lof_value = float('inf')
+        self.forward_and_backward_lof_value = float('inf')
         self.train_data_count = None
         self.data_dim = None
         self.optimization_method = 'nelder-mead'
 
         # Словари со начениями метрик
-        self.metrics = None
-        self.forward_train_metrics = None
-        self.forward_and_backward_train_metrics = None
+        self.metrics2func = {
+            'MSE': self.mse_func,
+            'MAE': self.mae_func,
+            'RSS': self.rss_func,
+            'RSQ': self.rsq_func,
+            'GRSQ': self.grsq_func,
+            #'GCV': self.gcv_func,
+            }
+        self.predict_metrics = None # зн-я метрик после вызова ф-ции predict()
+        self.metrics2value_forward = None # зн-я метрик после прохода вперёд
+        self.metrics2value_forward_and_backward = None # зн-я метрик после прохода вперёд и назад
 
 
     ### Множества нужны для verbose, trace и т.д.
@@ -395,22 +407,28 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         return C_correct
     
 
-    def metrics_calculation(self, y, B, coeffs, **kwargs):
+    def metrics_calculation(self, y, B, coeffs, metrics2func, **kwargs):
         """
-        Ф-ция, вычисляющая значения метрик inplace.
+        Ф-ция, вычисляющая значения метрик.
 
         Параметры
         ----------
         y: вектор, ответы на объектах
         B: матрица, объекты-б.ф.
         coeffs: вектор, коэфф-ты при б.ф.
+        metrics2func: dict(str2func), словарь название метрики - соотв. ф-ция
 
 
         Выход
         ----------
-        None
+        dict(str2float), словарь название метрики - её значение
         """
-        for name_metric in self.
+        metrics2value = {}
+
+        for name_metric, func in metrics2func.items():
+            metrics2value[name_metric] = func(y, B, coeffs, **kwargs)
+
+        return metrics2value
     
 
     def minspan_endspan_calculation(self, nonzero_count, data_dim):
@@ -471,6 +489,28 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         y_pred = self.g_calculation(B, coeffs)
         mse = np.mean((y - y_pred) ** 2)
         return mse
+    
+
+    def mae_func(self, y, B, coeffs, **kwargs):
+        """
+        Mean Absolute Error (MAE):
+            MAE = 1/N * sum(|y_i - f(x_i)|)
+            f(x) = g(x) = B @ a
+
+        Параметры
+        ----------
+        y: вектор, ответы на объектах
+        B: матрица, объекты-б.ф.
+        coeffs: вектор, коэфф-ты при б.ф.
+
+
+        Выход
+        ----------
+        float, значение MAE
+        """
+        y_pred = self.g_calculation(B, coeffs)
+        mae = np.mean(np.abs(y - y_pred))
+        return mae
     
 
     def rss_func(self, y, B, coeffs, **kwargs):
@@ -1309,10 +1349,10 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
             term_count += 2  # M <- M + 2
 
 
-        # Нахождение коэфф-ов построенной модели
-        self.term_list.coeffs, self.train_lof_value = self.coeffs_and_lof_calculation(B, y, self.term_list, for_X=False)
-        self.coeffs = self.term_list.coeffs
-        self.
+        # Нахождение коэфф-ов модели, построенной на шаге вперёд
+        self.coeffs, self.forward_lof_value = self.coeffs_and_lof_calculation(B, y, self.term_list, for_X=False)
+        self.term_list.coeffs = self.coeffs
+        self.metrics2value_forward = self.metrics_calculation(y, B, self.coeffs, self.metrics2func)
 
         return self
 
