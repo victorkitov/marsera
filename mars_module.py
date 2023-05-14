@@ -9,6 +9,7 @@ import numpy as np
 import scipy.optimize
 from numpy import linalg as LA
 from sklearn.base import RegressorMixin, BaseEstimator, TransformerMixin
+from itertools import compress
 
 
 class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
@@ -152,7 +153,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
             thresh=None, zero_tol=None, atol=None, rtol=None, min_search_points=None,
             check_every=None, allow_linear=None, use_fast=None, fast_K=None,
             fast_h=None, smooth=None, enable_pruning=True,
-            feature_importance_type=None, verbose=0):
+            feature_importance_type=None, verbose=0, dropout=None, dropout_type='both'):
 
         ### TODO число б.ф. должно быть меньше, чем размерность объектов d, проверка
         self.max_terms = max_terms          # +
@@ -178,6 +179,11 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         self.fast_h = fast_h
         self.check_every = check_every
 
+        # Вероятность базисной функции быть выкинутой 
+        self.dropout = dropout
+        if not (dropout_type == 'both' or dropout_type == 'solo'):
+            raise AttributeError
+        self.dropout_type = dropout_type
 
         if self.minspan == None:
             self.minspan = -1
@@ -1297,6 +1303,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
         best_lof = None
         term_count = 2  # M <- 2
+        is_dropped = self.dropout is not None
 
         # создаём б.ф. пока не достигнем макс. кол-ва
         while term_count <= self.max_terms:
@@ -1348,6 +1355,23 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
             B = np.hstack((B, b_term_plus, b_term_minus))
 
             term_count += 2  # M <- M + 2
+
+            # блок с применением dropout'a
+            if (term_count > self.max_terms and is_dropped
+                and 0. <= self.dropout <= 1.):
+                is_dropped = False
+
+                if self.dropout_type == 'both':
+                    mask = np.random.binomial(n=1, p=self.dropout, size=B.shape[1] // 2)
+                    mask = np.repeat(mask, 2)
+                else:
+                    mask = np.random.binomial(n=1, p=self.dropout, size=B.shape[1]-1)
+
+                mask = np.insert(mask, 0, 0)
+                mask = (mask == 0)
+                B = B[:, mask]
+                term_count -= np.sum(~mask)
+                self.term_list = self.TermListClass(self, compress(self.term_list, mask))
 
 
         # Нахождение коэфф-ов модели, построенной на шаге вперёд
