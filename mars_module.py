@@ -1356,7 +1356,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         self.metrics2value = self.metrics_calculation(y, B, self.coeffs, self.metrics2func)
 
 
-        # Заполняем информационные атрибуты для прохода назад
+        # Заполняем информационные атрибуты для прохода вперёд
         self.coef_ = self.coeffs
         self.basis_ = self.term_list
         self.term_list_forward_ = self.term_list
