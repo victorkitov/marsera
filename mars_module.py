@@ -16,91 +16,58 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
     """
     Класс, реализующий MARS.
 
-
-    ### Вся функциональность из py-earth должна быть сюда перенесена.
-    ### По возможности надо сохранить оригинальные названия аргументов, атрибутов, методов и т.д.
-
-
     Параметры
     ----------
-    max_terms : int
+    max_terms: int
         Максимальное число базисных функций.
 
-
-    max_degree : int
-        Максимальная степень множителей базисных функций.
-
-
-    penalty : float, optional (default=3.0)
-        Параметр сглаживания d в GCV (чем больше, тем меньше узлов создаётся).
+    penalty: float, optional (default=3.0)
+        Параметр сглаживания d в GCV. Чем больше, тем меньше узлов создаётся.
         C_new(M) = C(M) + d*M
 
-
-    thresh : float
+    thresh: float
         Условия остановки прямого прохода.
         Если RSQ > 1-tresh или если RSQ увеличивается меньше, чем на tresh после очередной итерации.
         ### TODO Можно будет предложить ещё какие-то условия.
 
-
-    smooth : bool, optional (default=False)
+    smooth: bool, optional (default=False)
         Использовать ли вместо срезки кубические усечённые сплайны с непрерывными 1ми производными?
 
+    allow_linear: bool, optional (default=False)
+        Допускать ли добавление линейных ф-ций?
 
-    allow_linear : bool, optional (default=True)
-         Допускать ли добавление линейных ф-ций?
+    allow_indicator: bool, optional (default=False)
+        Допускать ли добавление кусочно-постоянных ф-ций?
 
-
-    allow_ : bool, optional (default=False)
-    ### TODO Допускать ли добавление кусочно-постоянных ф-ций?
-
+    degree: int, optional(default=None)
+        Использовать ли усечённые сплайны заданной степени.
 
     feature_importance_type: string or list of strings, optional (default=None)
         Критерии важности признаков ('gcv', 'rss', 'nb_subsets').
         По умолчанию не вычисляется.
-        ### TODO Можно будет добавить свои критерии важности.
 
-
-    endspan_alpha : float, optional, probability between 0 and 1 (default=0.05)
+    endspan_alpha: float, optional, probability between 0 and 1 (default=0.05)
         Вероятности сделать больше endspan отклонений.
 
-
-    endspan : int, optional (default=-1)
+    endspan: int, optional (default=-1)
         Ручное задание интервала между узлом и краем.
 
-
-    minspan_alpha : float, optional, probability between 0 and 1 (default=0.05)
+    minspan_alpha: float, optional, probability between 0 and 1 (default=0.05)
         Вероятности сделать больше minspan отклонений.
 
-
-    minspan : int, optional (default=-1)
+    minspan: int, optional (default=-1)
         Ручное задание минимального интервала между соседними узлами.
 
-
-    enable_pruning : bool, optional (default=True)
+    enable_pruning: bool, optional (default=True)
         Делать ли обратный проход?
 
-
-    verbose : bool, optional(default=False)
+    verbose: bool, optional(default=False)
         Выводить ли дополнительную информацию?
 
-        
-    calc_error : float, optional
-        Допустимая погрешность вычисления. Это значение будет использоваться для
-        корректировки ошибок округления там, где это может быть важным
-        (например, положительная определённость)
-
-    
-    zero_tol : float, optional (default=1e-12)
-        Абсолютная точность. Используется для определения равно ли число с плавающей точкой нулю.
-        Нужен только для сохранения оригинальных названий из py-earth.
-        Рекомендуется использовать atol - обобщение zero_tol.
-
-    
     atol : float, optional (default=1e-12)
         Абсолютная точность. Нужен, в частности, для встречающихся в коде сравнений, а также для
         корректировки положительно определённых матриц, которые иногда в силу ошибок округления могут таковыми не оказаться.
         При появлении подобной ошибки уменьшить значения абсоютной и относительной точности.
-
 
     rtol : float, optional (default=1e-05)
         Относительная точность. Ситуации применения аналогичны atol.
@@ -109,116 +76,55 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         
     Атрибуты
     ----------
-    `coef_` : array, shape = [pruned basis length, number of outputs]
-        Веса несокращённых базисных функций.
-
-
-    `mse_` : float
-        MSE итоговой модели.
-
-
-    `rsq_` : float
-        RSQ итоговой модели.
-
-
-    `gcv_` : float
-        GCV итоговой модели.
-
-
-    `feature_importances_`: array of shape [m] or dict, где m - кол-во признаков
-        Важность всех объектов по одному из критериев.
-
-
-    `forward_pass_record_` : ???
-        Информация по прямому проходу.
-        ### TODO Тип выхода определяем сами, хотя можно глянуть как делали авторы библиотеки.
-
-
-    `pruning_pass_record_` : ???
-        Информация по обратному проходу.
-        ### TODO Тип выхода определяем сами, хотя можно глянуть как делали авторы библиотеки.
-
+    ... TODO
 
 
     Методы
     ----------
-    ### TODO
+    ... TODO
     ...
     """
 
     def __init__(
-            self, max_terms=None, max_degree=None, allow_missing=False,
-            penalty=None, endspan_alpha=None, endspan=None,
-            minspan_alpha=None, minspan=None,
-            thresh=None, zero_tol=None, atol=None, rtol=None, min_search_points=None,
-            check_every=None, allow_linear=None, use_fast=None, fast_K=None,
-            fast_h=None, smooth=None, enable_pruning=True,
-            feature_importance_type=None, verbose=0, dropout=None, dropout_type='both'):
+            self, max_terms=None, penalty=3,
+            endspan_alpha=0.05, endspan=None,
+            minspan_alpha=0.05, minspan=None,
+            atol=1e-04, rtol=1e-05,
+            allow_linear=False, enable_pruning=True,
+            dropout=None, dropout_type='both',
+            verbose=0):
 
-        ### TODO число б.ф. должно быть меньше, чем размерность объектов d, проверка
-        self.max_terms = max_terms          # +
-        self.max_degree = max_degree
-        self.penalty = penalty              # +
-        self.endspan_alpha = endspan_alpha  # +
-        self.endspan = endspan              # +
-        self.minspan_alpha = minspan_alpha  # +
-        self.minspan = minspan              # +
-        self.thresh = thresh
-        self.min_search_points = min_search_points
+        self.max_terms = max_terms ### TODO число б.ф. должно быть меньше, чем размерность объектов d, проверка
+        self.penalty = penalty
+        self.endspan_alpha = endspan_alpha
+        self.endspan = endspan
+        self.minspan_alpha = minspan_alpha
+        self.minspan = minspan
         self.allow_linear = allow_linear
-        self.smooth = smooth
-        self.enable_pruning = enable_pruning    # +
-        self.feature_importance_type = feature_importance_type
+        self.enable_pruning = enable_pruning
         self.verbose = verbose ### TODO сделать похожий вывод на pyearth
-        self.zero_tol = zero_tol # +
-        self.atol = atol         # +
-        self.rtol = rtol         # +
-        self.allow_missing = allow_missing
-        self.use_fast = use_fast
-        self.fast_K = fast_K
-        self.fast_h = fast_h
-        self.check_every = check_every
+        self.atol = atol
+        self.rtol = rtol
 
-        # Вероятность базисной функции быть выкинутой 
-        self.dropout = dropout
+        
+        self.dropout = dropout # вероятность базисной функции быть выкинутой
         if not (dropout_type == 'both' or dropout_type == 'solo'):
             raise AttributeError
         self.dropout_type = dropout_type
 
-        if self.minspan == None:
-            self.minspan = -1
-
-        if self.endspan == None:
-            self.endspan = -1
-
-
-        # Информационные атрибуты. Некоторые специально для обратной совместимости с pyearth
-        self.coef_ = None  # + 
-        self.basis_ = None  # +
-        self.mse_ = None
-        self.mae_ = None
-        self.rsq_ = None
-        self.rss_ = None
-        self.gcv_ = None
-        self.grsq_ = None
-        self.forward_pass_record_ = None
-        self.pruning_pass_record_ = None
-        self.xlabels_ = None
-        self.allow_missing_ = None
-        self.feature_importances_ = None
 
         self.term_list_forward_ = None
-        self.term_list_backward_ = None  # +
+        self.term_list_backward_ = None
         self.coeffs_forward_ = None
-        self.coeffs_backward_ = None  # +
+        self.coeffs_backward_ = None
         self.lof_value_forward_ = float('inf')
-        self.lof_value_backward_ = float('inf')  # +
+        self.lof_value_backward_ = float('inf')
         self.lof_value_predict_ = float('inf')
         self.metrics2value_forward_ = None
         self.metrics2value_backward_ = None
         self.metrics2value_predict_ = None
 
-        # Введённые параметры
+
         # term_list = [B_1, ..., B_M] - список б.ф. (term)
         # B = [mult_1 , ... , mult_K] - список множителей (mult) б.ф. B
         self.term_list = None
@@ -232,35 +138,15 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         self.metrics2func = {
             'MSE': self.mse_func,
             'MAE': self.mae_func,
-            #'RSS': self.rss_func, TODO
+            #'GCV': self.gcv_func,
             #'RSQ': self.rsq_func,
             #'GRSQ': self.grsq_func,
-            #'GCV': self.gcv_func,
             }
 
 
-    ### Множества нужны для verbose, trace и т.д.
-    ### Из py-earth пока не добавлены сюда: allow_missing, zero_tol, use_fast, fast_K, fast_h, check_every.
-    ### После реализации соответсвующих возможностей, добавлять сюда соответствующие параметры.
-    forward_pass_arg_names = set([
-        'max_terms', 'max_degree', 'allow_missing', 'penalty',
-        'endspan_alpha', 'endspan',
-        'minspan_alpha', 'minspan',
-        'thresh', 'min_search_points', 'allow_linear',
-        'feature_importance_type',
-        'verbose'
-    ])
-    pruning_pass_arg_names = set([
-        'penalty',
-        'feature_importance_type',
-        'verbose'
-    ])
-
-
     # =====================================Вспомогательные классы и ф-ции============================
-    ### TODO Уменьшить кол-во пересчётов матрицы B.
 
-    ### Мб можно хранить в более удобном виде?
+
     class TermClass(list):
         """
         Класс, реализующий представление б.ф.
@@ -399,8 +285,6 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         ----------
         float, поправочный коэффициент C_correct(M)
         '''
-        if self.penalty == None:
-            self.penalty = 3
 
         # Т.к. в V уже использована нормализованная мат. B (V = B^T @ (B - b_mean)) =>
         #   мат. B, которая используется в формуле для C(M), также должна быть нормирована
@@ -455,23 +339,15 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         ----------
         (minspan, endspan): (int, int), значения L и Le соотв.
         '''
-        if self.minspan_alpha == None:
-            self.minspan_alpha = 0.05
-
-        if self.endspan_alpha == None:
-            self.endspan_alpha = 0.05
-
-
         minspan = self.minspan
         endspan = self.endspan
 
-        if minspan == -1:
+        if minspan == None:
             minspan = int(-np.log2(-1 / (data_dim * nonzero_count) *
                           np.log(1 - self.minspan_alpha)) / 2.5)
 
-        if endspan == -1:
+        if endspan == None:
             endspan = int(3 - np.log2(self.endspan_alpha / data_dim))
-
 
         return (minspan, endspan)
 
@@ -721,7 +597,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
     def symmetric_positive_matrix_correct(self, A):
         """
         Ф-ция, корректирующая потенциально симметричную положительно определённую матрицу,
-          добавляя к ней диагональную матрицу, определяемую атрибутами точности: atol, rtol и zero_tol.
+          добавляя к ней диагональную матрицу, определяемую атрибутами точности: atol rtol.
         Далее происходит проверка достижения желаемого рез-та.
         В противном случае выбрасывается исключение и рекомендуется уменьшить точность.
         
@@ -734,15 +610,6 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         ----------
         матрица, симм. полож. опред.
         """
-        if (self.atol == None) and (self.zero_tol != None):
-            self.atol = self.zero_tol
-
-        if self.atol == None:
-            self.atol = 1e-04
-
-        if self.rtol == None:
-            self.rtol = 1e-05
-
 
         A += np.diag(self.atol + np.diag(A) * self.rtol)
 
@@ -1147,123 +1014,42 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         return (best_t, best_lof)
 
 
-    ### Дополнительные ф-ции, которые использовались в py-earth.
-    ### def __eq__(self, other):
-    ### def __ne__(self, other):
-    ### def _pull_forward_args(self, **kwargs): "Pull named arguments relevant to the forward pass"
-    ### def _pull_pruning_args(self, **kwargs): "Pull named arguments relevant to the pruning pass"
-    ### def _scrape_labels(self, X): "Try to get labels from input data (for example, if X is a
-    ### pandas DataFrame).  Return None if no labels can be extracted"
-    ### def _scrub_x(self, X, missing, **kwargs): "Sanitize input predictors and extract column names if appropriate"
-    ### def _scrub(self, X, y, sample_weight, output_weight, missing, **kwargs): "Sanitize input data"
+    # ==================================================Функциональность==========================================================
 
 
-    ### ==================================================Реализация основной функциональности==========================================================
-
-
-    ### Если какие-то параметры в последющих функциях не потребуется - ну значит не потребуются.
-    ### Но для наглядности пусть будут все.
-    def fit(
-            self, X, y=None,
-            sample_weight=None,
-            output_weight=None,
-            missing=None,
-            xlabels=None,
-            linvars=[]):
+    def fit(self, X, y=None):
         """
         Обучение модели.
 
 
         Параметры
         ----------
-        X : array-like, shape = [m, n], где m - кол-во объектов, n - кол-во признаков
+        X: array-like, shape = [m, n], где m - кол-во объектов, n - кол-во признаков
             Обучающая выборка.
 
-
-        y : array-like, optional (default=None), shape = [m, p], где m - кол-во объектов, p - кол-во разных выходов
+        y: array-like, optional (default=None), shape = [m], где m - кол-во объектов
             Ответы на объектах.
-
-
-        sample_weight : array-like, optional (default=None), shape = [m], где m - кол-во объектов
-            Пообъектное взвешивание. Веса >= 0. Полезно при несбалансированных дисперсиях распределений над объектами.
-
-
-        output_weight : array-like, optional (default=None), shape = [p], где p - кол-во выходов
-            Взвешивание всех ответов модели для каждого из выходовов после обучения.
-
-
-        ### Пока игнорируем
-        missing : array-like, shape = [m, n], где m - кол-во объектов, n - кол-во признаков.
-            ...
-
-
-        linvars : iterable of strings or ints, optional (empty by default)
-            Перечисление тех признаков (по номерам или именам), которые могут входить в базисные функции только линейно.
-
-
-        xlabels : iterable of strings , optional (empty by default)
-           Явное задание имён признаков (столбцов). Кол-во имён должно быть равно кол-ву признаков.
         """
-        ### TODO Дописать + реализовать вывод доп. инф-ции.
-        self.forward_pass(X, y,
-                          sample_weight=sample_weight,
-                          output_weight=output_weight,
-                          missing=missing,
-                          xlabels=xlabels,
-                          linvars=linvars)
+        self.forward_pass(X, y)
 
         if self.enable_pruning:
-            self.pruning_pass(X, y,
-                              sample_weight=sample_weight,
-                              output_weight=output_weight,
-                              missing=missing)
+            self.pruning_pass(X, y)
             
         return self
         
         
-    def forward_pass(
-            self, X, y=None,
-            sample_weight=None,
-            output_weight=None,
-            missing=None,
-            xlabels=None,
-            linvars=[],
-            skip_scrub=False):
+    def forward_pass(self, X, y=None):
         """
         Проход вперёд.
 
 
         Параметры
         ----------
-        X : array-like, shape = [m, n], где m - кол-во объектов, n - кол-во признаков
+        X: array-like, shape = [m, n], где m - кол-во объектов, n - кол-во признаков
             Обучающая выборка.
 
-
-        y : array-like, optional (default=None), shape = [m, p], где m - кол-во объектов, p - кол-во разных выходов
+        y: array-like, optional (default=None), shape = [m], где m - кол-во объектов
             Ответы на объектах.
-
-
-        sample_weight : array-like, optional (default=None), shape = [m], где m - кол-во объектов
-            Пообъектное взвешивание. Веса >= 0. Полезно при несбалансированных дисперсиях распределений над объектами.
-
-        ### как это понимать?
-        output_weight : array-like, optional (default=None), shape = [p], где p - кол-во выходов
-            Взвешивание всех ответов модели для каждого из выходовов после обучения.
-
-
-        ### Пока игнорируем
-        missing : array-like, shape = [m, n], где m - кол-во объектов, n - кол-во признаков.
-            ...
-
-
-        linvars : iterable of strings or ints, optional (empty by default)
-            Перечисление тех признаков (по номерам или именам), которые могут входить в базисные функции только линейно.
-
-
-        xlabels : iterable of strings , optional (empty by default)
-           Явное задание имён признаков (столбцов). Кол-во имён должно быть равно кол-ву признаков.
-
-        ### Что такое skip_scrub?
         """
 
         # Обозначения из оригинальной статьи:
@@ -1381,8 +1167,6 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
 
         # Заполняем информационные атрибуты для прохода вперёд
-        self.coef_ = self.coeffs
-        self.basis_ = self.term_list
         self.term_list_forward_ = self.term_list
         self.lof_value_forward_ = self.lof_value
         self.coeffs_forward_ = self.coeffs
@@ -1391,39 +1175,18 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         return self
 
 
-    def pruning_pass(
-            self, X, y=None,
-            sample_weight=None,
-            output_weight=None,
-            missing=None,
-            skip_scrub=False):
+    def pruning_pass(self, X, y=None):
         """
         Проход назад.
 
 
         Параметры
         ----------
-        X : array-like, shape = [m, n], где m - кол-во объектов, n - кол-во признаков
+        X: array-like, shape = [m, n], где m - кол-во объектов, n - кол-во признаков
             Обучающая выборка.
 
-
-        y : array-like, optional (default=None), shape = [m, p], где m - кол-во объектов, p - кол-во разных выходов
+        y: array-like, optional (default=None), shape = [m], где m - кол-во объектов
             Ответы на объектах.
-
-
-        sample_weight : array-like, optional (default=None), shape = [m], где m - кол-во объектов
-            Пообъектное взвешивание. Веса >= 0. Полезно при несбалансированных дисперсиях распределений над объектами.
-
-        ### как это понимать?
-        output_weight : array-like, optional (default=None), shape = [p], где p - кол-во выходов
-            Взвешивание всех ответов модели для каждого из выходовов после обучения.
-
-
-        ### Пока игнорируем
-        missing : array-like, shape = [m, n], где m - кол-во объектов, n - кол-во признаков.
-            ...
-
-        ### Что такое skip_scrub?
         """
         # названия переменных взяты из статьи
         M_max = len(self.term_list)
@@ -1468,8 +1231,6 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
 
         # Заполняем информационные атрибуты для прохода назад
-        self.coef_ = self.coeffs
-        self.basis_ = self.term_list
         self.term_list_backward_ = self.term_list
         self.lof_value_backward_ = self.lof_value
         self.coeffs_backward_ = self.coeffs
@@ -1479,208 +1240,63 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
         return self
     
 
-    def linear_fit(
-            self, X, y=None,
-            sample_weight=None,
-            output_weight=None,
-            missing=None,
-            skip_scrub=False):
+    def linear_fit(self, X, y=None):
         """
         Определение коэффициентов для линеной модели методом наименьших квадратов.
 
         Параметры
         ----------
-        X : array-like, shape = [m, n], где m - кол-во объектов, n - кол-во признаков
+        X: array-like, shape = [m, n], где m - кол-во объектов, n - кол-во признаков
             Обучающая выборка.
 
-
-        y : array-like, optional (default=None), shape = [m, p], где m - кол-во объектов, p - кол-во выходов
+        y: array-like, optional (default=None), shape = [m], где m - кол-во объектов
             Ответы на объектах.
-
-
-        sample_weight : array-like, optional (default=None), shape = [m], где m - кол-во объектов
-            Пообъектное взвешивание. Веса >= 0. Полезно при несбалансированных дисперсиях распределений над объектами.
-
-
-        output_weight : array-like, optional (default=None), shape = [p], где p - кол-во выходов
-            Взвешивание всех ответов модели для каждого из выходовов после обучения.
         """
-        ### TODO реализовать
+        ### TODO реализовать (обёртка над обычной sklearn регр)
         pass
 
 
-    def predict(self, X, missing=None, skip_scrub=False):
+    def predict(self, X):
         """
         Предсказание модели на входных данных.
 
         Параметры
         ----------
-        X : array-like, shape = [m, n], где m - кол-во объектов, n - кол-во признаков
+        X: array-like, shape = [m, n], где m - кол-во объектов, n - кол-во признаков
             Входные данные, по которым требуется сделать прогноз.
-
-        
-        missing : array-like, shape = [m, n], где m - кол-во объектов, n - кол-во признаков
-            ...
 
 
         Выход
         ----------
-        y : array of shape = [m] или [m, p], где m - кол-во объектов, p - кол-во выходов
-            ### TODO Множественная регрессия. Правильно понял?
-            Прогнозы.
+        y: array of shape = [m], где m - кол-во объектов
+            Прогноз.
         """
         B = self.b_calculation(X, self.term_list)
         y_pred = self.g_calculation(B, self.coeffs)
         return y_pred
 
 
-    def predict_deriv(self, X, variables=None, missing=None):
-        """
-        Предсказание первых производных на основе входных данных.
-
-        Параметры
-        ----------
-        X : array-like, shape = [m, n], где m - кол-во объектов, n - кол-во признаков
-            Входные данные, по которым требуется сделать прогноз.
-
-
-        missing : array-like, shape = [m, n], где m - кол-во объектов, n - кол-во признаков
-            (пока забиваем)
-            ...
-
-
-        variables : list
-            Перемнные, по которым будут вычисляться производные. None => по всем. Если такой
-
-
-        Выход
-        ----------
-        X_deriv : array of shape = [m, n, p], где m - кол-во объектов, p - кол-во выходов,
-        n - кол-во признаков, если variables не определён, иначе n = len(variables)
-            Матрица первых производных всех выходов по каждой variables.
-            
-        """
-        pass
-
-
-    def score(
-            self, X, y=None,
-            sample_weight=None,
-            output_weight=None,
-            missing=None,
-            skip_scrub=False):
-        """
-        Вычисляет обобщённый коэффициент детерминации (R-squared).
-        Чем он больше, тем лучше.
-
-        Параметры
-        ----------
-        X : array-like, shape = [m, n], где m - кол-во объектов, n - кол-во признаков
-            Обучающая выборка.
-
-
-        y : array-like, optional (default=None), shape = [m, p], где m - кол-во объектов, p - кол-во разных выходов
-            Ответы на объектах.
-
-
-        sample_weight : array-like, optional (default=None), shape = [m], где m - кол-во объектов
-            Пообъектное взвешивание. Веса >= 0. Полезно при несбалансированных дисперсиях распределений над объектами.
-
-
-        output_weight : array-like, optional (default=None), shape = [p], где p - кол-во выходов
-            Взвешивание всех ответов модели для каждого из выходовов после обучения.
-
-
-        ### Пока игнорируем
-        missing : array-like, shape = [m, n], где m - кол-во объектов, n - кол-во признаков.
-            ...
-
-
-        linvars : iterable of strings or ints, optional (empty by default)
-            Перечисление тех признаков (по номерам или именам), которые могут входить в базисные функции только линейно.
-
-
-        xlabels : iterable of strings , optional (empty by default)
-           Явное задание имён признаков (столбцов). Кол-во имён должно быть равно кол-ву признаков.
-
-
-        Выход
-        ----------
-        score : float (максимум 1, мб отрицательным).
-            Обобщённый коэффициент детерминации.
-        """
-        ### TODO реализовать
-        pass
-
-
-    def score_samples(self, X, y=None, missing=None):
-        """
-        ### TODO Не очень понял что это надо разобраться.
-
-        Параметры
-        ----------
-        X : array-like, shape = [m, n], где m - кол-во объектов, n - кол-во признаков
-            Обучающая выборка.
-
-
-        y : array-like, optional (default=None), shape = [m, p], где m - кол-во объектов, p - кол-во разных выходов
-            Ответы на объектах.
-
-
-        sample_weight : array-like, optional (default=None), shape = [m], где m - кол-во объектов
-            Пообъектное взвешивание. Веса >= 0. Полезно при несбалансированных дисперсиях распределений над объектами.
-
-
-        output_weight : array-like, optional (default=None), shape = [p], где p - кол-во выходов
-            Взвешивание всех ответов модели для каждого из выходовов после обучения.
-
-
-        ### Пока игнорируем
-        missing : array-like, shape = [m, n], где m - кол-во объектов, n - кол-во признаков.
-            ...
-
-
-        linvars : iterable of strings or ints, optional (empty by default)
-            Перечисление тех признаков (по номерам или именам), которые могут входить в базисные функции только линейно.
-
-
-        xlabels : iterable of strings , optional (empty by default)
-           Явное задание имён признаков (столбцов). Кол-во имён должно быть равно кол-ву признаков.
-
-
-        Выход
-        ----------
-        scores : array of shape=[m, p] of floats (максимум 1, мб отрицательным).
-            ...
-        """
-        pass
-
-
-    def transform(self, X, missing=None):
+    def transform(self, X):
         """
         Переход в пространство базисных функций.
 
         Параметры
         ----------
-        X : array-like, shape = [m, n], где m - кол-во объектов, n - кол-во признаков
+        X: array-like, shape = [m, n], где m - кол-во объектов, n - кол-во признаков
             Входные непреобразованные данные.
-
-
-        missing : array-like, shape = [m, n], где m - кол-во объектов, n - кол-во признаков
-            пропуски в данных ?
 
 
         Выход
         ----------
         B: array of shape [m, nb_terms], где m - кол-во объектов, nb_terms - кол-во
         получившихся базисных функций.
-            Матрица объекты-б.ф.
+            Преобразованные данные.
         """
         B = self.b_calculation(X, self.term_list)
         return B
 
 
-    ### ========================================================Вывод информации=======================================================================
+    # ========================================================Вывод информации=======================================================================
 
 
     class InfoClass():
@@ -1731,29 +1347,7 @@ class Earth(BaseEstimator, RegressorMixin, TransformerMixin):
 
         Параметры
         ----------
-        sory_by : string, optional
+        sory_by: string, optional
             Сортировка, если поддерживается, по feature_importance_type ('rrs', 'gcv', 'nb_subsets').
         """
         pass
-
-
-    def get_penalty(self):
-        """
-        Возвращает параметр сглаживания d, который используется в:
-            C_correct(M) = C(M) + d*M.
-        """
-        return self.penalty
-    
-
-    def get_minspan_endspan(self):
-        """
-        Возвращает L(alpha) и Le(alpha), т.ч.:
-            L(alpha)  - задаёт шаг из порогов между соседними узлами
-            Le(alpha) - задаёт отступ из порогов для граничных узлов
-        Смысл: сглаживание скользящим окном.
-        """
-        return (self.minspan, self.endspan)
-
-
-### ==========================================Для всякого====================================================== 
-### TODO Проверка на корректность атрибутов с исключениями.
